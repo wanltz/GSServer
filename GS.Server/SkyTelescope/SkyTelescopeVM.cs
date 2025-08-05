@@ -137,7 +137,7 @@ namespace GS.Server.SkyTelescope
                     var extendedList = new List<int>(Numbers.InclusiveIntRange(1000, 3000, 100));
                     RaBacklashList = RaBacklashList.Concat(extendedList);
                     DecBacklashList = DecBacklashList.Concat(extendedList);
-                    AxisTrackingLimits = new List<double>(Numbers.InclusiveRange(0, 15, 1));
+                    AxisTrackingLimits = new List<double>(Numbers.InclusiveRange(-15, 15, 1));
                     AxisHzTrackingLimits = new List<double>(Numbers.InclusiveRange(-20, 20, 1));
 
                     // defaults

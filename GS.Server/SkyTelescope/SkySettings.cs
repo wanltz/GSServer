@@ -814,7 +814,7 @@ namespace GS.Server.SkyTelescope
             get => _axisTrackingLimit;
             set
             {
-                if (Math.Abs(_axisTrackingLimit - value) < 0.0000000000001) return;
+                //if (Math.Abs(_axisTrackingLimit - value) < 0.0000000000001) return;
                 _axisTrackingLimit = value;
                 Properties.SkyTelescope.Default.AxisTrackingLimit = value;
                 LogSetting(MethodBase.GetCurrentMethod()?.Name, $"{value}");

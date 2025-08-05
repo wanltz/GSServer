@@ -704,7 +704,10 @@ namespace GS.Server.SkyTelescope
             get => _limitAlarm;
             private set
             {
-                if (LimitAlarm == value) return;
+                if (LimitAlarm == value)
+                {
+                    return;
+                }
                 _limitAlarm = value;
                 if (value) Synthesizer.Speak(Application.Current.Resources["vceLimit"].ToString());
                 var monitorItem = new MonitorEntry
@@ -719,6 +722,7 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
                 OnStaticPropertyChanged();
+
             }
         }
 
@@ -3022,7 +3026,7 @@ namespace GS.Server.SkyTelescope
             };
 
             //Meridian Limit Test,  combine flip angle and tracking limit for a total limit passed meridian
-            var totLimit = SkySettings.HourAngleLimit + SkySettings.AxisTrackingLimit;
+            var totLimit = /*SkySettings.HourAngleLimit +*/ SkySettings.AxisTrackingLimit;
 
             // check the ranges of the axes primary axis must be in the range 0 to 360 for AltAz or Polar
             // and -hourAngleLimit to 180 + hourAngleLimit for german polar
@@ -3098,7 +3102,7 @@ namespace GS.Server.SkyTelescope
                     case AlignmentModes.algAltAz:
                         break;
                     case AlignmentModes.algGermanPolar:
-                        if (SideOfPier == PierSide.pierEast && Altitude <= SkySettings.AxisHzTrackingLimit && Tracking)
+                        if (Altitude <= SkySettings.AxisHzTrackingLimit)
                         {
                             limitHit = true;
                             horizonLimit = true;
