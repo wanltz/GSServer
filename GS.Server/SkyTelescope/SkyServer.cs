@@ -704,10 +704,7 @@ namespace GS.Server.SkyTelescope
             get => _limitAlarm;
             private set
             {
-                if (LimitAlarm == value)
-                {
-                    return;
-                }
+                if (LimitAlarm == value) return;
                 _limitAlarm = value;
                 if (value) Synthesizer.Speak(Application.Current.Resources["vceLimit"].ToString());
                 var monitorItem = new MonitorEntry
@@ -722,7 +719,6 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
                 OnStaticPropertyChanged();
-
             }
         }
 
