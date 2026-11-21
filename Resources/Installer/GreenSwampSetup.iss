@@ -45,7 +45,6 @@ Name: "french"; MessagesFile: "compiler:Languages\French.isl"
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "italian"; MessagesFile: "compiler:Languages\Italian.isl"
 ; Keep this script and ChineseSimplified.isl as UTF-8 with BOM when building with Inno Setup < 6.3.
-Name: "chinese"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Dirs]
 Name: "{commoncf}\ASCOM\Uninstall\Telescope\GSServer\"
@@ -77,7 +76,6 @@ english.WelcomeLabel2={#MyAppName} {#MyAppVersion}%n%nThis will install {#MyAppN
 french.WelcomeLabel2={#MyAppName} {#MyAppVersion}%n%nCela installera {#MyAppName} {#MyAppVersion} sur votre ordinateur.%n%nIl est recommandé de fermer toutes les autres applications qui utilisent actuellement {#MyAppName}
 german.WelcomeLabel2={#MyAppName} {#MyAppVersion}%n%nDadurch wird {#MyAppName} {#MyAppVersion} auf deinem Computer.%n%nEs wird empfohlen, alle anderen Anwendungen zu schließen, die derzeit möglicherweise verwendet werden {#MyAppName}
 italian.WelcomeLabel2={#MyAppName} {#MyAppVersion}%n%nQuesto installerà {#MyAppName} {#MyAppVersion} sul tuo computer.%n%nSi consiglia di chiudere tutte le altre applicazioni attualmente in uso {#MyAppName}
-chinese.WelcomeLabel2={#MyAppName} {#MyAppVersion}%n%n这将在你的计算机上安装 {#MyAppName} {#MyAppVersion}。%n%n建议关闭当前可能正在使用 {#MyAppName} 的所有其他应用程序。
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
