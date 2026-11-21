@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -21,7 +21,7 @@ using System.Windows.Data;
 namespace GS.Server.Domain
 {
     [ComVisible(false)]
-    internal class EnumBooleanConverter : IValueConverter
+    internal class EnumToBoolConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         {

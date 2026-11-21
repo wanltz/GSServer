@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob  Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -205,7 +205,7 @@ namespace GS.SkyWatcher
                 }
 
                 var speedInt = CalculateSpeed(axis, internalSpeed); // Calculate mount speed
-                speedInt = Math.Min(speedInt, (long)0x00ffffff); // I command parameter must fit in 24 bits
+                speedInt = Math.Min(speedInt, 0x00ffffff); // I command parameter must fit in 24 bits
 
                 SetRates(axis, rate);
 
@@ -267,17 +267,18 @@ namespace GS.SkyWatcher
         /// <param name="duration">length of pulse in milliseconds, always positive numbers</param>
         /// <param name="backlashSteps">Positive micro steps added for backlash</param>
         /// <param name="token">Token source used to cancel pulse guide operation</param>
-        internal void AxisPulse(AxisId axis, double guideRate, int duration, int backlashSteps, CancellationToken token)
+        /// <param name="startedEvent">Optional event signalled when the hardware command has been sent</param>
+        internal void AxisPulse(AxisId axis, double guideRate, int duration, int backlashSteps, CancellationToken token, ManualResetEventSlim startedEvent = null)
         {
             Task.Run(() =>
             {
                 var datetime = HiResDateTime.UtcNow;
                 var monitorItem = new MonitorEntry // setup to log the pulse
-                { Datetime = datetime, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MonitorLog.GetCurrentMethod(), Thread = Thread.CurrentThread.ManagedThreadId, Message = $"{axis}|{guideRate}|{duration}|{backlashSteps}|{MinPulseDurationRa}|{MinPulseDurationDec}|{DecPulseGoTo}" };
+                { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MonitorLog.GetCurrentMethod()+"_Enter", Thread = Thread.CurrentThread.ManagedThreadId, Message = $"{axis}|{guideRate}|{duration}|{backlashSteps}|{MinPulseDurationRa}|{MinPulseDurationDec}|{DecPulseGoTo}" };
                 MonitorLog.LogToMonitor(monitorItem);
 
                 var pulseEntry = new PulseEntry // setup to graph the pulse
-                { Axis = (int)axis, Duration = duration, Rate = guideRate, Rejected = false, StartTime = datetime, };
+                { Axis = (int)axis, Duration = duration, Rate = guideRate, Rejected = false, StartTime = HiResDateTime.UtcNow, };
 
                 backlashSteps = Math.Abs(backlashSteps);
                 var arcSecs = duration / 1000.0 * Math.Abs(guideRate) * 3600.0;
@@ -326,11 +327,12 @@ namespace GS.SkyWatcher
                             if (_commands.SupportAdvancedCommandSet && _commands.AllowAdvancedCommandSet)
                             {
                                 _commands.AxisSlew_Advanced(AxisId.Axis1, applyRate);
+                                startedEvent?.Set(); // Signal: hardware command sent
                             }
                             else
                             {
                                 var speedInt = CalculateSpeed(AxisId.Axis1, applyRate);  // Calculate required mount speed
-                                AxisStatus axesStatus = _commands.GetAxisStatus(AxisId.Axis1); // Get axis status
+                                var axesStatus = _commands.GetAxisStatus(AxisId.Axis1); // Get axis status
                                 slewingForward = axesStatus.SlewingForward; // Get current direction of motion
                                 changeDirection = slewingForward != (applyRate >= 0.0);
                                 if (changeDirection) // Need to change direction of motion
@@ -344,23 +346,35 @@ namespace GS.SkyWatcher
                                 {
                                     _commands.SetStepSpeed(AxisId.Axis1, speedInt); // :I Send pulse to axis
                                 }
+                                startedEvent?.Set(); // Signal: hardware command sent
                             }
 
-                            pulseEntry.StartTime = _commands.LastI1RunTime; // get the last :I start time
+                            //pulseEntry.StartTime = _commands.LastI1RunTime; // get the last :I start time
 
-                            var raPulseTime = HiResDateTime.UtcNow - pulseEntry.StartTime; // possible use for min pulse duration time
-                            var raSpan = duration - raPulseTime.TotalMilliseconds;
+                            //var raPulseTime = HiResDateTime.UtcNow - pulseEntry.StartTime; // possible use for min pulse duration time
+                            //var raSpan = duration - raPulseTime.TotalMilliseconds;
 
-                            if (raSpan > 0 && raSpan < duration) // checking duration is met
-                            {
+                            //if (raSpan > 0 && raSpan < duration) // checking duration is met
+                            // {
                                 var sw1 = Stopwatch.StartNew();
-                                while (sw1.Elapsed.TotalMilliseconds < raSpan)
+                                //var nextUpdateTime = 200.0; // Next time to call UpdateSteps in milliseconds
+
+                                while (sw1.Elapsed.TotalMilliseconds < duration)
                                 {
                                     // check for cancellation
                                     token.ThrowIfCancellationRequested();
-                                    if (sw1.ElapsedMilliseconds % 200 == 0) { UpdateSteps(); } // Process positions while waiting
+
+                                    // Check if it's time to update steps
+                                    //if (sw1.Elapsed.TotalMilliseconds >= nextUpdateTime)
+                                    //{
+                                        //UpdateSteps();
+                                    //    nextUpdateTime += 200.0; // Schedule next update
+                                    //}
+
+                                    // Sleep for 10ms to yield CPU - maintains good timing precision
+                                    Thread.Sleep(10);
                                 }
-                            }
+                            // }
                         }
                         catch (OperationCanceledException)
                         {
@@ -400,6 +414,7 @@ namespace GS.SkyWatcher
 
                             if (_pPecOn && AlternatingPPec) { SetPPec(AxisId.Axis1, true); } // implements the alternating pPEC
 
+                            if (startedEvent != null && !startedEvent.IsSet) startedEvent.Set();
                             SkyQueue.IsPulseGuidingRa = false;
                         }
                         break;
@@ -440,6 +455,7 @@ namespace GS.SkyWatcher
                                 // check for cancellation
                                 token.ThrowIfCancellationRequested();
                                 AxisMoveSteps(AxisId.Axis2, stepsNeeded);
+                                startedEvent?.Set(); // Signal: hardware command sent
 
                                 var axesStatus = _commands.GetAxisStatus(AxisId.Axis2);
                                 if (!axesStatus.FullStop)
@@ -473,6 +489,7 @@ namespace GS.SkyWatcher
                             }
                             finally
                             {
+                                if (startedEvent != null && !startedEvent.IsSet) startedEvent.Set();
                                 SkyQueue.IsPulseGuidingDec = false;
                             }
                         }
@@ -499,20 +516,25 @@ namespace GS.SkyWatcher
                                 // check for cancellation
                                 token.ThrowIfCancellationRequested();
                                 AxisSlew(AxisId.Axis2, guideRate); // Send pulse to axis 
-                                pulseEntry.StartTime = _commands.LastJ2RunTime; // last :J2 start time
-                                var decPulseTime = HiResDateTime.UtcNow - pulseEntry.StartTime; // possible use for min pulse duration time
-                                var decSpan = duration - decPulseTime.TotalMilliseconds;
+                                startedEvent?.Set(); // Signal: hardware command sent
+                                //pulseEntry.StartTime = _commands.LastJ2RunTime; // last :J2 start time
+                                //var decPulseTime = HiResDateTime.UtcNow - pulseEntry.StartTime; // possible use for min pulse duration time
+                                //var decSpan = duration - decPulseTime.TotalMilliseconds;
 
-                                if (decSpan > 0 && decSpan < duration) // checking duration is met
-                                {
+                                //if (decSpan > 0 && decSpan < duration) // checking duration is met
+                                //{
                                     var sw3 = Stopwatch.StartNew();
-                                    while (sw3.Elapsed.TotalMilliseconds < decSpan)
+                                //    //var nextUpdateTime = 200.0; // Next time to call UpdateSteps in milliseconds
+
+                                    while (sw3.Elapsed.TotalMilliseconds < duration)
                                     {
                                         // check for cancellation
                                         token.ThrowIfCancellationRequested();
-                                        if (sw3.ElapsedMilliseconds % 200 == 0) { UpdateSteps(); } // Process positions while waiting
+
+                                        // Sleep for 10ms to yield CPU - maintains good timing precision
+                                        Thread.Sleep(10);
                                     }
-                                }
+                                //  }
                             }
                             catch (OperationCanceledException)
                             {
@@ -531,6 +553,7 @@ namespace GS.SkyWatcher
                             finally
                             {
                                 AxisStop(AxisId.Axis2);
+                                if (startedEvent != null && !startedEvent.IsSet) startedEvent.Set();
                                 SkyQueue.IsPulseGuidingDec = false;
                             }
                         }
@@ -540,6 +563,11 @@ namespace GS.SkyWatcher
                     SkyQueue.IsPulseGuidingDec = false;
                         throw new ArgumentOutOfRangeException(nameof(axis), axis, null);
                 }
+
+                var executionTime = HiResDateTime.UtcNow - datetime;
+                monitorItem = new MonitorEntry // setup to log pulse completion
+                { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MonitorLog.GetCurrentMethod()+"_Exit ", Thread = Thread.CurrentThread.ManagedThreadId, Message = $"{executionTime.TotalMilliseconds:F1}|{axis}|{guideRate}|{duration}|{backlashSteps}|{MinPulseDurationRa}|{MinPulseDurationDec}|{DecPulseGoTo}" };
+                MonitorLog.LogToMonitor(monitorItem);
 
                 if (!MonitorPulse) return;
                 pulseEntry.Duration = duration;
@@ -1086,15 +1114,11 @@ namespace GS.SkyWatcher
             {
                 switch (axis)
                 {
+                    case AxisId.Axis2:
                     case AxisId.Axis1:
                         MountVersion = versions[0];
                         MountType = GetEnumDescription((McModel)models[0]);
                         MountNum = models[0];
-                        break;
-                    case AxisId.Axis2:
-                        MountVersion = versions[1];
-                        MountType = GetEnumDescription((McModel)models[1]);
-                        MountNum = models[1];
                         break;
                     default:
                         throw new ArgumentOutOfRangeException(nameof(axis), axis, null);

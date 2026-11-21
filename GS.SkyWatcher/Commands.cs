@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob  Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -62,10 +62,10 @@ namespace GS.SkyWatcher
 
         #region Properties
 
-        public DateTime LastI1RunTime { get; private set; }
+      //  public DateTime LastI1RunTime { get; private set; }
         public DateTime LastJ1RunTime { get; private set; }
         public DateTime LastJ2ARunTime { get; private set; }
-        public DateTime LastJ2RunTime { get; private set; }
+      //  public DateTime LastJ2RunTime { get; private set; }
         private bool MountConnected { get; set; }
 
         /// <summary>
@@ -266,7 +266,7 @@ namespace GS.SkyWatcher
         {
             string response, msg;
             MonitorEntry monitorItem;
-            var newMsg = $"Adv:N/A;N/A";
+            var newMsg = "Adv:N/A;N/A";
             long[] revOld = { 0, 0 };
             long[] revNew = { 0, 0 };
 
@@ -311,7 +311,7 @@ namespace GS.SkyWatcher
 
             // default _resolutionFactor is already set to 1
             if (revOld[0] > 0) { _resolutionFactor[0] = (int)(revNew[0] / revOld[0]); }
-            if (_resolutionFactor[0] == 0) { _resolutionFactor[0] = 1; } //make sure its not 0
+            if (_resolutionFactor[0] == 0) { _resolutionFactor[0] = 1; } //make sure it's not 0
 
             if (revOld[1] > 0) { _resolutionFactor[1] = (int)(revNew[1] / revOld[1]); }
             if (_resolutionFactor[1] == 0) { _resolutionFactor[1] = 1; } //make sure it's not 0
@@ -358,7 +358,7 @@ namespace GS.SkyWatcher
                 msg = "a";
                 response = CmdToMount(axis, 'a', null);
                 var gearRatio = StringToLong(response);
-                // There is a issue in the earlier version firmware(Before 2.00) of motor controller MC001.
+                // There is an issue in the earlier version firmware(Before 2.00) of motor controller MC001.
                 // Overwrite the GearRatio reported by the MC for 80GT mount and 114GT mount.
                 if (axis == AxisId.Axis1)
                 {
@@ -495,33 +495,34 @@ namespace GS.SkyWatcher
                 _axisStringVersion[0] = mountVersion;
                 _axisVersion[0] = intVersion;
                 _axisModel[0] = mountModel;
+                
+                var version = new Version(first, second);
+                // Exclude AZ GTI in EQ mode prior version 3.40
+                if (mountModel == 165 && version < AzgTiAdvancedSetSupportedVersion)
+                {
+                    SupportAdvancedCommandSet = false;
+                }
+                // SW recommends no support for single axis trackers 0x07, 0x08, 0x0A, and 0x0F
+                // "Star Adventurer Mount" advanced firmware 3.130.07 exclude
+                else if (intVersion == 0x038207)
+                {
+                    SupportAdvancedCommandSet = false;
+                }
+                else if (intVersion > 0x032200)  //205312
+                {
+                    SupportAdvancedCommandSet = true;
+                }
+                else
+                {
+                    SupportAdvancedCommandSet = false;
+                }
             }
             else
             {
+                // The secondary axis version is not used for advanced command set check, newer mounts it's used for WiFi version
                 _axisStringVersion[1] = mountVersion;
                 _axisVersion[1] = intVersion;
                 _axisModel[1] = mountModel;
-            }
-
-            var version = new Version(first, second);
-            // Exclude AZ GTI in EQ mode prior version 3.40
-            if (mountModel == 165 && version < AzgTiAdvancedSetSupportedVersion)
-            {
-                SupportAdvancedCommandSet = false;
-            }
-            // SW recommends no support for single axis trackers 0x07, 0x08, 0x0A, and 0x0F
-            // "Star Adventurer Mount" advanced firmware 3.130.07 exclude
-            else if (intVersion == 0x038207)
-            {
-                SupportAdvancedCommandSet = false;
-            }
-            else if (intVersion > 0x032200)  //205312
-            {
-                SupportAdvancedCommandSet = true;
-            }
-            else
-            {
-                SupportAdvancedCommandSet = false;
             }
 
             var monitorItem = new MonitorEntry
@@ -1086,7 +1087,7 @@ namespace GS.SkyWatcher
                     msg = ":F|Axis2";
                 }
                 monitorItem = new MonitorEntry
-                { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"Initialized|" + msg };
+                { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = "Initialized|" + msg };
                 MonitorLog.LogToMonitor(monitorItem);
             }
 
@@ -1347,9 +1348,8 @@ namespace GS.SkyWatcher
         {
             var ratePad = '0';
 
-            //var irateInSteps = AngleToStep(axis, rateInRadian * 1024);
-            //irateInSteps *= _resolutionFactor[(int)axis];
-            var irateInSteps = AngleToStep(axis, rateInRadian * 1024 * _resolutionFactor[(int)axis]);
+            var irateInSteps = AngleToStep(axis, rateInRadian * 1024);
+            irateInSteps *= _resolutionFactor[(int)axis];
 
             if (rateInRadian < 0) { ratePad = 'F'; } // F for negative numbers
             var szCmd = "02" + irateInSteps.ToString("X").PadLeft(16, ratePad);
@@ -1378,15 +1378,13 @@ namespace GS.SkyWatcher
         internal void AxisSlewTo_Advanced(AxisId axis, double targetInRadian, double rateInRadian = 0)
         {
             var targetPad = '0';
-            //var itargetInSteps = AngleToStep(axis, targetInRadian);
-            //itargetInSteps *= _resolutionFactor[(int)axis];
-            var itargetInSteps = AngleToStep(axis, targetInRadian * _resolutionFactor[(int)axis]);
+            var itargetInSteps = AngleToStep(axis, targetInRadian);
+            itargetInSteps *= _resolutionFactor[(int)axis];
             if (itargetInSteps < 0) { targetPad = 'F'; } // F for negative numbers
 
             var ratePad = '0';
-            //var irateInSteps = AngleToStep(axis, rateInRadian * 1024);
-            //irateInSteps *= _resolutionFactor[(int)axis];
-            var irateInSteps = AngleToStep(axis, rateInRadian * 1024 * _resolutionFactor[(int)axis]);
+            var irateInSteps = AngleToStep(axis, rateInRadian * 1024);
+            irateInSteps *= _resolutionFactor[(int)axis];
             if (irateInSteps < 0) { ratePad = 'F'; } // F for negative numbers
 
             var szCmd = "04" + itargetInSteps.ToString("X").PadLeft(8, targetPad) + irateInSteps.ToString("X").PadLeft(16, ratePad);
@@ -1593,10 +1591,10 @@ namespace GS.SkyWatcher
                     LastJ2ARunTime = dt;
                     break;
                 case 'J' when axis == AxisId.Axis2:
-                    LastJ2RunTime = dt;
+                  //  LastJ2RunTime = dt;
                     break;
                 case 'I' when axis == AxisId.Axis1:
-                    LastI1RunTime = dt;
+                   // LastI1RunTime = dt;
                     break;
                 case 'X':
                     if (cmdDataStr == "0003")
@@ -1618,10 +1616,10 @@ namespace GS.SkyWatcher
                         switch (axis)
                         {
                             case AxisId.Axis1:
-                                LastI1RunTime = dt;
+                             //   LastI1RunTime = dt;
                                 break;
                             case AxisId.Axis2:
-                                LastJ2RunTime = dt;
+                             //   LastJ2RunTime = dt;
                                 break;
                             default:
                                 throw new ArgumentOutOfRangeException(nameof(axis), axis, null);
@@ -1840,7 +1838,7 @@ namespace GS.SkyWatcher
         }
 
         ///// <summary>
-        ///// Sends :e1 to the mounts and evaluates response to see its an appropriate response.
+        ///// Sends :e1 to the mounts and evaluates response to see it's an appropriate response.
         ///// </summary>
         //internal void TestSerial()
         //{
@@ -1904,10 +1902,10 @@ namespace GS.SkyWatcher
                     value += (long)(int.Parse(str.Substring(i, 2), NumberStyles.AllowHexSpecifier) * Math.Pow(16, i - 1));
                 }
 
-                var msg = $"|{str}|{value}";
-                var monitorItem = new MonitorEntry
-                    { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = msg };
-                MonitorLog.LogToMonitor(monitorItem);
+                //var msg = $"|{str}|{value}";
+                //var monitorItem = new MonitorEntry
+                //    { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = msg };
+                //MonitorLog.LogToMonitor(monitorItem);
 
                 return value;
             }
@@ -1979,10 +1977,10 @@ namespace GS.SkyWatcher
                 var parsed = int.Parse(response, NumberStyles.HexNumber);
                 var a = parsed / divFactor;
 
-                var msg = $"|{response}|{parseFirst}|{divFactor}|{a}";
-                var monitorItem = new MonitorEntry
-                    { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = msg };
-                MonitorLog.LogToMonitor(monitorItem);
+                //var msg = $"|{response}|{parseFirst}|{divFactor}|{a}";
+                //var monitorItem = new MonitorEntry
+                //    { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Telescope, Category = MonitorCategory.Mount, Type = MonitorType.Debug, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = msg };
+                //MonitorLog.LogToMonitor(monitorItem);
                 return a;
             }
             catch (Exception ex)

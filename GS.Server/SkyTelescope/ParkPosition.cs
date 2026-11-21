@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -18,6 +18,12 @@ using System;
 
 namespace GS.Server.SkyTelescope
 {
+    /// <summary>
+    /// Represents a named position within the park, defined by X and Y coordinates.
+    /// </summary>
+    /// <remarks>A ParkPosition can be initialized with default coordinates based on the current alignment
+    /// mode or with explicit values. Instances are considered equal if their name and coordinates match. This class is
+    /// useful for storing and comparing park positions in telescope control scenarios.</remarks>
     public class ParkPosition
     {
         public ParkPosition()
@@ -29,7 +35,9 @@ namespace GS.Server.SkyTelescope
                     X = 0; Y = 0;
                     break;
                 case AlignmentModes.algPolar:
-                    X = 0; Y = 0;
+                    var axes = Axes.AzAltToPolarPark(SkyServer.SouthernHemisphere ? 0 : 180, 0);
+                    X = axes[0];
+                    Y = axes[1];
                     break;
                 case AlignmentModes.algGermanPolar:
                     X = 90; Y = 90;

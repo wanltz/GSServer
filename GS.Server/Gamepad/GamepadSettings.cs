@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -254,6 +254,22 @@ namespace GS.Server.GamePad
                     case "focusout":
                         Properties.Gamepad.Default.focusout = setting.Value;
                         LogSetting(MethodBase.GetCurrentMethod()?.Name, $"focusout {setting.Value}");
+                        break;
+                    case "northeast":
+                        Properties.Gamepad.Default.northeast = setting.Value;
+                        LogSetting(MethodBase.GetCurrentMethod()?.Name, $"northeast {setting.Value}");
+                        break;
+                    case "northwest":
+                        Properties.Gamepad.Default.northwest = setting.Value;
+                        LogSetting(MethodBase.GetCurrentMethod()?.Name, $"northwest {setting.Value}");
+                        break;
+                    case "southeast":
+                        Properties.Gamepad.Default.southeast = setting.Value;
+                        LogSetting(MethodBase.GetCurrentMethod()?.Name, $"southeast {setting.Value}");
+                        break;
+                    case "southwest":
+                        Properties.Gamepad.Default.southwest = setting.Value;
+                        LogSetting(MethodBase.GetCurrentMethod()?.Name, $"southwest {setting.Value}");
                         break;
                 }
             }

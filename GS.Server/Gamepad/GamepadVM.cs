@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -247,6 +247,54 @@ namespace GS.Server.GamePad
             set
             {
                 _right = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private string _ne;
+
+        public string NE
+        {
+            get => _ne;
+            set
+            {
+                _ne = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private string _nw;
+
+        public string NW
+        {
+            get => _nw;
+            set
+            {
+                _nw = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private string _se;
+
+        public string SE
+        {
+            get => _se;
+            set
+            {
+                _se = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private string _sw;
+
+        public string SW
+        {
+            get => _sw;
+            set
+            {
+                _sw = value;
                 OnPropertyChanged();
             }
         }
@@ -525,6 +573,7 @@ namespace GS.Server.GamePad
                     ResetCounts();
                     EnableTextBoxes = true;
                     var buttontocheck = -1;
+                    var diagtocheck = new DiagPair(-1, -1, string.Empty);
                     var povtocheck = new PovPair(-1, 0);
                     var xaxistocheck = new AxisPair(-1, String.Empty);
                     var yaxistocheck = new AxisPair(-1, String.Empty);
@@ -582,8 +631,23 @@ namespace GS.Server.GamePad
                                         _gamePad.Get_KeyByValue("button" + " " + buttontocheck));
                                 }
                             }
+                            else if (diagtocheck.VertIdx > -1)
+                            {
+                                if (String.IsNullOrEmpty(key))
+                                {
+                                    var bothPressed = gamepadButtons[diagtocheck.VertIdx] && gamepadButtons[diagtocheck.HorizIdx];
+                                    var result = DoGamePadCommand(diagtocheck.VertIdx, bothPressed, diagtocheck.Cmd);
+                                    if (result == -1) diagtocheck = new DiagPair(-1, -1, string.Empty);
+                                }
+                            }
                             else
                             {
+                                var vertIdx = -1;
+                                var horizIdx = -1;
+                                var vertCmd = string.Empty;
+                                var horizCmd = string.Empty;
+                                var singleIdx = -1;
+                                var singleCmd = string.Empty;
                                 for (var i = 0; i < gamepadButtons.Length; i++)
                                 {
                                     if (!gamepadButtons[i]) continue;
@@ -594,9 +658,43 @@ namespace GS.Server.GamePad
                                         break;
                                     }
 
-                                    buttontocheck = DoGamePadCommand(i, gamepadButtons[i],
-                                        _gamePad.Get_KeyByValue(cmd));
-                                    break;
+                                    var mapped = _gamePad.Get_KeyByValue(cmd);
+                                    if (mapped == "up" || mapped == "down")
+                                    {
+                                        if (vertIdx == -1) { vertIdx = i; vertCmd = mapped; }
+                                    }
+                                    else if (mapped == "left" || mapped == "right")
+                                    {
+                                        if (horizIdx == -1) { horizIdx = i; horizCmd = mapped; }
+                                    }
+                                    else if (singleIdx == -1 && !string.IsNullOrEmpty(mapped))
+                                    {
+                                        singleIdx = i;
+                                        singleCmd = mapped;
+                                    }
+                                }
+                                if (key == null)
+                                {
+                                    if (vertIdx > -1 && horizIdx > -1)
+                                    {
+                                        var diagKey = vertCmd == "up" && horizCmd == "right" ? "northeast" :
+                                                      vertCmd == "up" && horizCmd == "left" ? "northwest" :
+                                                      vertCmd == "down" && horizCmd == "right" ? "southeast" : "southwest";
+                                        var res = DoGamePadCommand(vertIdx, true, diagKey);
+                                        if (res > -1) diagtocheck = new DiagPair(vertIdx, horizIdx, diagKey);
+                                    }
+                                    else if (vertIdx > -1)
+                                    {
+                                        buttontocheck = DoGamePadCommand(vertIdx, true, vertCmd);
+                                    }
+                                    else if (horizIdx > -1)
+                                    {
+                                        buttontocheck = DoGamePadCommand(horizIdx, true, horizCmd);
+                                    }
+                                    else if (singleIdx > -1)
+                                    {
+                                        buttontocheck = DoGamePadCommand(singleIdx, true, singleCmd);
+                                    }
                                 }
                             }
                         }
@@ -611,7 +709,7 @@ namespace GS.Server.GamePad
                                 {
                                     var pushed = povtocheck.Value == gamepadPovs[povtocheck.Key];
                                     var dir = PovDirection(povtocheck.Value);
-                                    var cmd = _gamePad.Get_KeyByValue("pov" + " " + dir + " " + povtocheck.Key);
+                                    var cmd = GetPovCommand(dir, povtocheck.Key);
                                     var id = DoGamePadCommand(povtocheck.Key, pushed, cmd);
                                     if (id == -1) povtocheck = new PovPair(-1, 0);
                                 }
@@ -624,7 +722,7 @@ namespace GS.Server.GamePad
                                     var newhit = new PovPair(i, gamepadPovs[i]);
                                     var dir = PovDirection(newhit.Value);
                                     var val = "pov" + " " + dir + " " + newhit.Key;
-                                    var cmd = _gamePad.Get_KeyByValue(val);
+                                    var cmd = GetPovCommand(dir, newhit.Key);
 
                                     if (key != null)
                                     {
@@ -1071,6 +1169,62 @@ namespace GS.Server.GamePad
                                 _skyTelescopeVM.HcMouseUpRightCommand.Execute(null);
                             break;
                         }
+                    case "northeast":
+                        if (value)
+                        {
+                            if (_skyTelescopeVM.HcMouseDownNeCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseDownNeCommand.Execute(null);
+                            returnId = id;
+                            break;
+                        }
+                        else
+                        {
+                            if (_skyTelescopeVM.HcMouseUpNeCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseUpNeCommand.Execute(null);
+                            break;
+                        }
+                    case "northwest":
+                        if (value)
+                        {
+                            if (_skyTelescopeVM.HcMouseDownNwCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseDownNwCommand.Execute(null);
+                            returnId = id;
+                            break;
+                        }
+                        else
+                        {
+                            if (_skyTelescopeVM.HcMouseUpNwCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseUpNwCommand.Execute(null);
+                            break;
+                        }
+                    case "southeast":
+                        if (value)
+                        {
+                            if (_skyTelescopeVM.HcMouseDownSeCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseDownSeCommand.Execute(null);
+                            returnId = id;
+                            break;
+                        }
+                        else
+                        {
+                            if (_skyTelescopeVM.HcMouseUpSeCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseUpSeCommand.Execute(null);
+                            break;
+                        }
+                    case "southwest":
+                        if (value)
+                        {
+                            if (_skyTelescopeVM.HcMouseDownSwCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseDownSwCommand.Execute(null);
+                            returnId = id;
+                            break;
+                        }
+                        else
+                        {
+                            if (_skyTelescopeVM.HcMouseUpSwCommand.CanExecute(null))
+                                _skyTelescopeVM.HcMouseUpSwCommand.Execute(null);
+                            break;
+                        }
                     case "speedup":
                         if (value)
                         {
@@ -1446,6 +1600,18 @@ namespace GS.Server.GamePad
                 case "right":
                     Right = val;
                     break;
+                case "northeast":
+                    NE = val;
+                    break;
+                case "northwest":
+                    NW = val;
+                    break;
+                case "southeast":
+                    SE = val;
+                    break;
+                case "southwest":
+                    SW = val;
+                    break;
                 case "volumedown":
                     VolumeDown = val;
                     break;
@@ -1536,6 +1702,18 @@ namespace GS.Server.GamePad
                             break;
                         case "right":
                             Right = val;
+                            break;
+                        case "northeast":
+                            NE = val;
+                            break;
+                        case "northwest":
+                            NW = val;
+                            break;
+                        case "southeast":
+                            SE = val;
+                            break;
+                        case "southwest":
+                            SW = val;
                             break;
                         case "volumedown":
                             VolumeDown = val;
@@ -1740,6 +1918,18 @@ namespace GS.Server.GamePad
                         break;
                     case "right":
                         Right = null;
+                        break;
+                    case "northeast":
+                        NE = null;
+                        break;
+                    case "northwest":
+                        NW = null;
+                        break;
+                    case "southeast":
+                        SE = null;
+                        break;
+                    case "southwest":
+                        SW = null;
                         break;
                     case "volumedown":
                         VolumeDown = null;
@@ -2127,14 +2317,43 @@ namespace GS.Server.GamePad
             {
                 case 0:
                     return "up";
+                case 4500:
+                    return "northeast";
                 case 9000:
                     return "right";
+                case 13500:
+                    return "southeast";
                 case 18000:
                     return "down";
+                case 22500:
+                    return "southwest";
                 case 27000:
                     return "left";
+                case 31500:
+                    return "northwest";
                 default:
                     return "";
+            }
+        }
+
+        private string GetPovCommand(string direction, int povIndex)
+        {
+            var indexedCommand = _gamePad.Get_KeyByValue("pov" + " " + direction + " " + povIndex);
+            if (!string.IsNullOrEmpty(indexedCommand))
+            {
+                return indexedCommand;
+            }
+
+            // Backward compatibility for older diagonal POV settings stored without an index.
+            switch (direction)
+            {
+                case "northeast":
+                case "northwest":
+                case "southeast":
+                case "southwest":
+                    return _gamePad.Get_KeyByValue("pov" + " " + direction);
+                default:
+                    return null;
             }
         }
 

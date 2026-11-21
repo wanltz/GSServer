@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -48,8 +48,8 @@ namespace GS.Server
         private static readonly object LockObject = new object();
         private static bool _removeProfile;
         private static BackgroundWorker _bgWorker;
-        private const string _driverName = "ASCOM.GS.Sky.Telescope.dll";
-        private const string _apiName = "GS.SkyApi.dll";
+        private const string DriverName = "ASCOM.GS.Sky.Telescope.dll";
+        private const string ApiName = "GS.SkyApi.dll";
 
         #endregion
 
@@ -169,7 +169,7 @@ namespace GS.Server
                 SaveAllAppSettings();
 
                 var monitorItem = new MonitorEntry
-                { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"GSServer: Exiting" };
+                { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = "GSServer: Exiting" };
                 MonitorLog.LogToMonitor(monitorItem);
 
                 var wParam = new UIntPtr(0);
@@ -208,14 +208,14 @@ namespace GS.Server
 
             var dir = new DirectoryInfo(assyPath);
             var files = new List<FileInfo>();
-            var driverpath = dir + "\\" + _driverName;
-            if (File.Exists(driverpath)) { files.Add(new FileInfo(driverpath)); }
+            var driverPath = dir + "\\" + DriverName;
+            if (File.Exists(driverPath)) { files.Add(new FileInfo(driverPath)); }
 
-            var apipath = dir + "\\" + _apiName;
-            if (File.Exists(apipath)) { files.Add(new FileInfo(apipath)); }
+            var apiPath = dir + "\\" + ApiName;
+            if (File.Exists(apiPath)) { files.Add(new FileInfo(apiPath)); }
 
-            var dllfiles = files.ToArray();
-            if (dllfiles.Length == 0)
+            var dllFiles = files.ToArray();
+            if (dllFiles.Length == 0)
             {
                 var msg = @"Unable to locate any drivers - " + assyPath;
 
@@ -226,7 +226,7 @@ namespace GS.Server
                 return false;
             }
 
-            foreach (var fi in dllfiles)
+            foreach (var fi in dllFiles)
             {
                 var aPath = fi.FullName;
                 //
@@ -244,8 +244,8 @@ namespace GS.Server
                         // Check to see if the type has the ServedClassName attribute, only use it if it does.
                         MemberInfo info = type;
 
-                        var attrbutes = info.GetCustomAttributes(typeof(ServedClassNameAttribute), false);
-                        if (attrbutes.Length > 0)
+                        var attributes = info.GetCustomAttributes(typeof(ServedClassNameAttribute), false);
+                        if (attributes.Length > 0)
                         {
                             var monitorItem = new MonitorEntry
                             { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"{type.Assembly}" };
@@ -253,10 +253,10 @@ namespace GS.Server
 
                             _comObjectTypes.Add(type); //PWGS - much simpler
                         }
-                        var gssAttrbutes = info.GetCustomAttributes(typeof(GssAttribute), false);
-                        if (gssAttrbutes.Length > 0)
+                        var gssAttributes = info.GetCustomAttributes(typeof(GssAttribute), false);
+                        if (gssAttributes.Length > 0)
                         {
-                            var a = (GssAttribute)gssAttrbutes[0];
+                            var a = (GssAttribute)gssAttributes[0];
 
                             var monitorItem = new MonitorEntry
                             { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"{type.Assembly}|{a.DisplayName}" };
@@ -345,9 +345,9 @@ namespace GS.Server
         //
         // Using the list of COM object types generated during dynamic
         // assembly loading, it registers each one for COM as served by our
-        // exe/local server, as well as registering it for ASCOM. It also
+        // exe/local server, as well as registering it for asCom. It also
         // adds DCOM info for the local server itself, so it can be activated
-        // via an outboiud connection from TheSky.
+        // via an outBound connection from TheSky.
         private static void RegisterObjects()
         {
             if (!IsAdministrator)
@@ -607,11 +607,15 @@ namespace GS.Server
             var bRet = true;
             if (args.Count > 0)
             {
-                foreach (string arg in args)
+                foreach (var arg in args)
                 {
                     switch (arg.ToLower())
                     {
                         // should the profile be removed?
+                        case "-autoconnect":
+                        case @"/autoconnect":
+                            SkyServer.StartConnected = true;
+                            break;
                         case "-unprofile":
                         case @"/unprofile":
                             _removeProfile = true;
@@ -653,9 +657,13 @@ namespace GS.Server
                         case @"/italian":
                             Shared.Settings.Language = "it-IT";
                             break;
+                        case @"/zh":
+                        case @"/chinese":
+                            Shared.Settings.Language = "zh-CN";
+                            break;
                         default:
                             MessageBox.Show(
-                                @"Unknown argument: '" + arg.ToLower() + @"' Valid: /unprofile, /register, /unregister, /embedding, /pec, /english, /french, /german, /italian",
+                                @"Unknown argument: '" + arg.ToLower() + @"' Valid: /autoconnect, /unprofile, /register, /unregister, /embedding, /pec, /english, /french, /german, /italian, /chinese",
                                 @"GSServer", MessageBoxButtons.OK, MessageBoxIcon.Exclamation);
                             break;
                     }
@@ -700,7 +708,7 @@ namespace GS.Server
             LogSystemInfo(args);
 
             var monitorItem = new MonitorEntry
-            { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"GSServer: Starting Main Thread" };
+            { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = "GSServer: Starting Main Thread" };
             MonitorLog.LogToMonitor(monitorItem);
 
             if (!LoadComObjectAssemblies()) return; // Load served COM class assemblies, get types
@@ -728,7 +736,7 @@ namespace GS.Server
                 app.Run();
 
                 monitorItem = new MonitorEntry
-                { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = $"GSServer: Shutdown" };
+                { Datetime = Principles.HiResDateTime.UtcNow, Device = MonitorDevice.Server, Category = MonitorCategory.Server, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = "GSServer: Shutdown" };
                 MonitorLog.LogToMonitor(monitorItem);
 
             }
@@ -773,10 +781,10 @@ namespace GS.Server
             {
                 var msg = new System.Text.StringBuilder();
 
-                var HKLMWinNTCurrent = @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion";
+                var hklmWinNtCurrent = @"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion";
                 
-                msg.AppendFormat("{0}{1}", ", ProductName:", Registry.GetValue(HKLMWinNTCurrent, "productName", ""));
-                msg.AppendFormat("{0}{1}", ", ReleaseId:", Registry.GetValue(HKLMWinNTCurrent, "ReleaseId", ""));
+                msg.AppendFormat("{0}{1}", ", ProductName:", Registry.GetValue(hklmWinNtCurrent, "productName", ""));
+                msg.AppendFormat("{0}{1}", ", ReleaseId:", Registry.GetValue(hklmWinNtCurrent, "ReleaseId", ""));
                 msg.AppendFormat("{0}{1}", ", Platform:", Environment.OSVersion.Platform);
                 msg.AppendFormat("{0}{1}", ", Version:", Environment.OSVersion.VersionString);
                 msg.AppendFormat("{0}{1}", ", ServicePack:", Environment.OSVersion.ServicePack);

@@ -381,7 +381,7 @@
       <Value Profile="(Default)">2500</Value>
     </Setting>
     <Setting Name="HzLimitTracking" Type="System.Boolean" Scope="User">
-      <Value Profile="(Default)" />
+      <Value Profile="(Default)">False</Value>
     </Setting>
     <Setting Name="ParkHzLimitName" Type="System.String" Scope="User">
       <Value Profile="(Default)" />
@@ -430,6 +430,24 @@
     </Setting>
     <Setting Name="AutoHomeAxisY" Type="System.Double" Scope="User">
       <Value Profile="(Default)" />
+    </Setting>
+    <Setting Name="TrackAfterUnpark" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="LimitsOn" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">True</Value>
+    </Setting>
+    <Setting Name="HcOneClickStart" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
+    </Setting>
+    <Setting Name="Observatories" Type="System.String" Scope="User">
+      <Value Profile="(Default)">""</Value>
+    </Setting>
+    <Setting Name="ObservatoryName" Type="System.String" Scope="User">
+      <Value Profile="(Default)">Default</Value>
+    </Setting>
+    <Setting Name="HzLimitSlewing" Type="System.Boolean" Scope="User">
+      <Value Profile="(Default)">False</Value>
     </Setting>
   </Settings>
 </SettingsFile>

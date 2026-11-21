@@ -1,4 +1,19 @@
-﻿using GS.Principles;
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+using GS.Principles;
 using GS.Server.SkyTelescope;
 using GS.Shared;
 using GS.Simulator;
@@ -119,6 +134,20 @@ namespace GS.Server.AutoHome
             if (!HasHomeSensor) return AutoHomeResult.HomeCapabilityCheckFailed;
             _ = new CmdAxisStop(0, axis);
             if (SkyServer.Tracking) SkyServer.Tracking = false;
+
+            // Capture the initialised home position as the reference baseline
+            var homeAxes = SkyServer.GetHomeAxes(SkySettings.HomeAxisX, SkySettings.HomeAxisY);
+            MonitorLog.LogToMonitor(new MonitorEntry
+            {
+                Datetime = HiResDateTime.UtcNow,
+                Device = MonitorDevice.Server,
+                Category = MonitorCategory.Server,
+                Type = MonitorType.Information,
+                Method = MethodBase.GetCurrentMethod()?.Name,
+                Thread = Thread.CurrentThread.ManagedThreadId,
+                Message = $"AutoHome initialised home position|Axis:{axis}|X:{homeAxes.X}|Y:{homeAxes.Y}"
+            });
+
             //StartCount = GetEncoderCount(axis);
             var totalMove = 0.0;
             // ReSharper disable once RedundantAssignment
@@ -240,6 +269,22 @@ namespace GS.Server.AutoHome
             // slew to home
             slewResult = SlewToHome(axis);
             if (slewResult != AutoHomeResult.Success) return slewResult;
+
+            // Log detected sensor home position vs initialised home position
+            var detectedPositions = Axes.MountAxis2Mount();
+            MonitorLog.LogToMonitor(new MonitorEntry
+            {
+                Datetime = HiResDateTime.UtcNow,
+                Device = MonitorDevice.Server,
+                Category = MonitorCategory.Server,
+                Type = MonitorType.Information,
+                Method = MethodBase.GetCurrentMethod()?.Name,
+                Thread = Thread.CurrentThread.ManagedThreadId,
+                Message = $"AutoHome sensor vs initialised home|Axis:{axis}" +
+                          $"|HomeX:{homeAxes.X}|HomeY:{homeAxes.Y}" +
+                          $"|DetectedX:{detectedPositions[0]}|DetectedY:{detectedPositions[1]}" +
+                          $"|DeltaX:{detectedPositions[0] - homeAxes.X}|DeltaY:{detectedPositions[1] - homeAxes.Y}"
+            });
 
             // Dec offset for side saddles
             if (Math.Abs(offSetDec) > 0 && axis == Axis.Axis2)

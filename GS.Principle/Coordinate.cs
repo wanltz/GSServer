@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -14,7 +14,6 @@
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
 using System;
-using System.Collections.Generic;
 
 namespace GS.Principles
 {
@@ -122,6 +121,7 @@ namespace GS.Principles
             var h = Math.Sin(c);
             var i = Math.Cos(c);
             var j = e * i * g + h * f;
+            if (j > 1) j = 1; if (j < -1) j = -1;
             var k = Units.Rad2Deg2(Math.Asin(j));
             var l = Range.Range90(k);
             var n = -d * g;
@@ -175,6 +175,7 @@ namespace GS.Principles
         //    var g = Math.Cos(b);
         //    var h = Math.Sin(c);
         //    var i = Math.Cos(c);
+        //    if (j > 1) j = 1; if (j< -1) j = -1;
         //    var j = f * h + g * i * e;
         //    var haDec2Alt = Units.Rad2Deg(Math.Asin(j));
         //    return haDec2Alt;
@@ -217,6 +218,7 @@ namespace GS.Principles
             var h = Math.Sin(c);
             var i = Math.Cos(c);
             var j = e * i * g + h * f;
+            if (j > 1) j = 1; if (j < -1) j = -1;
             var k = Units.Rad2Deg2(Math.Asin(j));
             var altAz2Dec = Range.Range90(k);
             return altAz2Dec;

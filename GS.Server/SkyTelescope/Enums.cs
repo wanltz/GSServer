@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -22,6 +22,20 @@ namespace GS.Server.SkyTelescope
         Axes,
         Guiding,
         Pulse
+    }
+
+    public enum HcOneClickType
+    {
+        Up,
+        Down,
+        Right,
+        Left,
+        Ne,
+        Nw,
+        Se,
+        Sw,
+        Stop,
+        Na
     }
 
     public enum SlewType
@@ -60,6 +74,10 @@ namespace GS.Server.SkyTelescope
         SlewDown,
         SlewLeft,
         SlewRight,
+        SlewNorthEast,
+        SlewNorthWest,
+        SlewSouthEast,
+        SlewSouthWest,
         SlewNoneRa,
         SlewNoneDec
     }
@@ -217,4 +235,21 @@ namespace GS.Server.SkyTelescope
         HomeCapabilityCheckFailed = -5,
         UnknownError = -99
     }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    public enum AutoHomePositionType
+    {
+        DefaultGEM,
+        PolarRADec,
+        PolarAzAlt
+    }
+
+    public enum HomeParkPositionType
+    {
+        Default,
+        Custom
+    }
+
 }

@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -13,15 +13,23 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <https://www.gnu.org/licenses/>.
  */
+
+#region Usings
 using ASCOM.DeviceInterface;
 using ASCOM.Utilities;
+using Gma.System.MouseKeyHook;
+using GS.FitsImageManager;
 using GS.Principles;
 using GS.Server.Cdc;
+using GS.Server.Controls.Dialogs;
 using GS.Server.Gps;
 using GS.Server.Helpers;
 using GS.Server.Main;
+using GS.Server.Pulses;
+using GS.Server.Windows;
 using GS.Shared;
-using GS.FitsImageManager;
+using GS.Shared.Command;
+using GS.Shared.Transport;
 using HelixToolkit.Wpf;
 using MaterialDesignColors;
 using MaterialDesignThemes.Wpf;
@@ -31,37 +39,33 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
-using System.Drawing;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Numerics;
+using System.Reflection;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
-using Gma.System.MouseKeyHook;
-using GS.Server.Controls.Dialogs;
-using GS.Server.Windows;
-using GS.Shared.Command;
 using Application = System.Windows.Application;
 using Brush = System.Windows.Media.Brush;
 using Brushes = System.Windows.Media.Brushes;
 using Color = System.Windows.Media.Color;
+using KeyEventArgs = System.Windows.Input.KeyEventArgs;
 using MouseEventArgs = System.Windows.Input.MouseEventArgs;
 using NativeMethods = GS.Server.Helpers.NativeMethods;
+using Path = System.IO.Path;
 using Point = System.Windows.Point;
-using GS.Shared.Transport;
-using System.Net;
-using System.Net.NetworkInformation;
-using System.Net.Sockets;
-using System.Reflection;
-using System.Text;
-using System.Threading;
-using KeyEventArgs = System.Windows.Input.KeyEventArgs;
+using Rectangle = System.Drawing.Rectangle;
 using Vector = System.Windows.Vector;
-using GS.Server.Pulses;
+#endregion
 
 namespace GS.Server.SkyTelescope
 {
@@ -113,11 +117,13 @@ namespace GS.Server.SkyTelescope
                     SkySettings.StaticPropertyChanged += PropertyChangedSkySettings;
                     Shared.Settings.StaticPropertyChanged += PropertyChangedMonitorLog;
                     Settings.Settings.StaticPropertyChanged += PropertyChangedSettings;
+                    ParkPositionViewModel.Instance.PropertyChanged += PropertyChangedParkPositionViewModel;
+                    ObservatoryViewModel.Instance.PropertyChanged += PropertyChangedObservatoryViewModel;
                     GlobalStopOn = SkySettings.GlobalStopOn;
 
                     // dropdown lists
                     GuideRateOffsetList = new List<double>(Numbers.InclusiveRange(10, 100, 10));
-                    MaxSlewRates = new List<double>(Numbers.InclusiveRange(2.0, 5));
+                    MaxSlewRates = new List<double>(Numbers.InclusiveRange(2.0, 8));
                     HourAngleLimits = new List<double>(Numbers.InclusiveRange(0, 90, 1));
                     Range90 = new List<int>(Enumerable.Range(0, 90));
                     Range179 = new List<int>(Enumerable.Range(0, 180));
@@ -134,6 +140,7 @@ namespace GS.Server.SkyTelescope
                     Temperatures = new List<double>(Numbers.InclusiveRange(-50, 60, 1.0));
                     AutoHomeLimits = new List<int>(Enumerable.Range(20, 160));
                     DecOffsets = new List<int>() { 0, -90, 90 };
+                    AutoHomeAxisValues = new List<double>(Numbers.InclusiveRange(85.0, 95.0));
                     MinPulseList = new List<int>(Enumerable.Range(5, 46));
                     RaBacklashList = new List<int>(Enumerable.Range(0, 1001));
                     DecBacklashList = new List<int>(Enumerable.Range(0, 1001));
@@ -142,14 +149,38 @@ namespace GS.Server.SkyTelescope
                     DecBacklashList = DecBacklashList.Concat(extendedList);
                     AxisTrackingLimits = new List<double>(Numbers.InclusiveRange(-15, 15, 1));
                     AxisHzTrackingLimits = new List<double>(Numbers.InclusiveRange(-20, 20, 1));
+                    HomeAxisAltList = new List<int>(Numbers.InclusiveIntRange(-30, 30));
+                    HomeParkAzList  = new List<int>(Numbers.InclusiveIntRange(0, 360));
+                    HomeParkAltList = new List<int>(Numbers.InclusiveIntRange(-90, 90));
 
                     // defaults
                     AtPark = SkyServer.AtPark;
-                    ParkPositions = SkySettings.ParkPositions;
+                    IsLimits = SkySettings.LimitsOn;
                     ConnectButtonContent = Application.Current.Resources["skyConnect"].ToString();
                     VoiceState = Settings.Settings.VoiceActive;
-                    ParkSelection = AtPark ? SkyServer.GetStoredParkPosition() : ParkPositions.FirstOrDefault();
-                    ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                    HcOneClickStart = SkySettings.HcOneClickStart;
+
+                    if (AtPark)
+                    {
+                        var parkedName = SkySettings.ParkName;
+                        var parkedPosition = ParkPositions.FirstOrDefault(p => p.Name == parkedName);
+                        if (parkedPosition != null)
+                        {
+                            ParkSelection = parkedPosition;
+                            ParkSelectionSetting = parkedPosition;
+                        }
+                        else
+                        {
+                            ParkSelection = ParkPositions.FirstOrDefault();
+                            ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                        }
+                    }
+                    else
+                    {
+                        ParkSelection = ParkPositions.FirstOrDefault();
+                        ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                    }
+
                     SetHcFlipsVisibility();
                     RightAscension = "00h 00m 00s";
                     Declination = "00\xb0 00m 00s";
@@ -169,8 +200,56 @@ namespace GS.Server.SkyTelescope
                     // Flip Dialog
                     FlipDialogHeader = GetResourceByMode("btnFlip");
                     FlipDialogText = GetResourceByMode("btnContinueFlip");
+                    // Home and AutoHome Settings Dialog
+                     RefreshHomeAxisDisplay();
+                    if (SkySettings.AutoHomeAxisX == 90.0 && SkySettings.AutoHomeAxisY == 90.0) // Factory default
+                    {
+                        AutoHomeAxisAz = SkyServer.SouthernHemisphere ? 0 : 180;
+                        AutoHomeAxisAlt = 0;
+                        SelectedAutoHomePosition = AutoHomePositionType.DefaultGEM;
+                    }
+                    else // Custom settings stored as Northern Hemisphere values
+                    {
+                        var autoHome = Coordinate.HaDec2AltAz(SkySettings.AutoHomeAxisX / 15.0, SkySettings.AutoHomeAxisY, 
+                            Math.Abs(SkySettings.Latitude));
+                        AutoHomeAxisAz = Convert.ToInt32(autoHome[1]) - (SkyServer.SouthernHemisphere ? 180 : 0);
+                        AutoHomeAxisAlt = Convert.ToInt32(autoHome[0]);
+                        SelectedAutoHomePosition = AutoHomePositionType.PolarAzAlt;
+                    }
+
+                    // Home Park Position panel initialisation
+                    var existingHomePark = SkySettings.ParkPositions?
+                        .FirstOrDefault(p => string.Equals(p.Name, "Home", StringComparison.OrdinalIgnoreCase));
+                    if (existingHomePark != null)
+                    {
+                        var azAlt = Axes.PolarParkToAzAlt(existingHomePark.X, existingHomePark.Y);
+                        if (Math.Abs(existingHomePark.X - 90.0) < 0.00001 && Math.Abs(existingHomePark.Y - 90.0) < 0.00001)
+                        {
+                            azAlt[0] = 0.0;
+                            azAlt[1] = Math.Abs(SkySettings.Latitude);
+                        }
+                        double displayAz = Math.Abs(azAlt[0]);
+                        if (SkyServer.SouthernHemisphere)
+                            displayAz = Range.Range360(displayAz + 180.0);
+                        HomeParkAz  = Convert.ToInt32(displayAz);
+                        HomeParkAlt = Convert.ToInt32(azAlt[1]);
+                        var isDefault = Math.Abs(azAlt[1] - Math.Abs(SkySettings.Latitude)) < 0.00001;
+                        SelectedHomeParkPosition = isDefault ? HomeParkPositionType.Default : HomeParkPositionType.Custom;
+                    }
+                    else
+                    {
+                        HomeParkAz  = SkyServer.SouthernHemisphere ? 180 : 360;
+                        HomeParkAlt = Convert.ToInt32(Math.Abs(SkySettings.Latitude));
+                        SelectedHomeParkPosition = HomeParkPositionType.Default;
+                    }
+
+                    // Observatory panel initialisation
+                    ObservatorySelection = Observatories.FirstOrDefault(o => o.Name == SkySettings.ObservatoryName);
 
                     SetShowUI();
+
+                    SetMainColors();
+                    ResetHcButtonColors();
 
                     HcWinVisibility = true;
                     ModelWinVisibility = true;
@@ -182,8 +261,25 @@ namespace GS.Server.SkyTelescope
                     RaDecDialogActive = true;
                     AltAzDialogActive = false;
                     TrackingLimitSettingsEnable = (SkySettings.AlignmentMode == AlignmentModes.algGermanPolar);
+                    IsGermanPolarMode = (SkySettings.AlignmentMode == AlignmentModes.algGermanPolar);
 
                     DiscoverySetup();
+
+                    if (SkyServer.StartConnected)
+                    {
+                        monitorItem = new MonitorEntry
+                        {
+                            Datetime = HiResDateTime.UtcNow,
+                            Device = MonitorDevice.Ui,
+                            Category = MonitorCategory.Interface,
+                            Type = MonitorType.Error,
+                            Method = MethodBase.GetCurrentMethod()?.Name,
+                            Thread = Thread.CurrentThread.ManagedThreadId,
+                            Message = $"command-line AutoConnect|{SkyServer.StartConnected}"
+                        };
+                        MonitorLog.LogToMonitor(monitorItem);
+                        ClickConnect();
+                    }
                 }
 
                 // check to make sure window is visible then connect if requested.
@@ -207,6 +303,18 @@ namespace GS.Server.SkyTelescope
                 SkyServer.IsMountRunning = false;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
+        }
+
+        /// <summary>
+        /// Refreshes HomeAxisX and HomeAxisY VM properties from the current SkySettings values.
+        /// Called from the constructor and whenever AlignmentMode changes.
+        /// </summary>
+        private void RefreshHomeAxisDisplay()
+        {
+            HomeAxisX = (int)SkySettings.HomeAxisX;
+            var angleOffset = SkyServer.SouthernHemisphere ? 180 : 0;
+            HomeAxisX -= angleOffset;
+            HomeAxisY = (int)SkySettings.HomeAxisY;
         }
 
         /// <summary>
@@ -254,6 +362,41 @@ namespace GS.Server.SkyTelescope
 
         #region View Model Items
 
+        private Brush AccentColor { get; set; }
+        
+        private Brush PrimaryColor { get; set; }
+
+        private void SetMainColors()
+        {
+            // set up accent color
+            var primaryColor = Settings.Settings.PrimaryColor;
+            if (!string.IsNullOrEmpty(primaryColor))
+            {
+                var swatches = new SwatchesProvider().Swatches;
+                foreach (var swatch in swatches)
+                {
+                    if (swatch.Name != primaryColor) continue;
+                    var converter = new BrushConverter();
+                    var primaryBrush = (Brush)converter.ConvertFromString(swatch.ExemplarHue.Color.ToString());
+                    PrimaryColor = primaryBrush;
+                }
+            }
+
+            // set up accent color
+            var accentColor = Settings.Settings.AccentColor;
+            if (!string.IsNullOrEmpty(accentColor))
+            {
+                var swatches = new SwatchesProvider().Swatches;
+                foreach (var swatch in swatches)
+                {
+                    if (swatch.Name != accentColor) continue;
+                    var converter = new BrushConverter();
+                    var accentbrush = (Brush)converter.ConvertFromString(swatch.ExemplarHue.Color.ToString());
+                    AccentColor = accentbrush;
+                }
+            }
+        }
+
         private FrontGraphic _graphic;
         public FrontGraphic Graphic
         {
@@ -294,8 +437,7 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
-
-
+        
         private bool _pecShow;
         /// <summary>
         /// sets up bool to load a test tab
@@ -391,6 +533,9 @@ namespace GS.Server.SkyTelescope
                      case "HcSpeed":
                          HcSpeed = (double)SkySettings.HcSpeed;
                          break;
+                     case "HcOneClickStart":
+                         HcOneClickStart = SkySettings.HcOneClickStart;
+                         break;
                      case "Longitude":
                          UpdateLongitude();
                          break;
@@ -403,9 +548,21 @@ namespace GS.Server.SkyTelescope
                      case "Elevation":
                          Elevation = SkySettings.Elevation;
                          break;
+                     case "Temperature":
+                         OnPropertyChanged(nameof(Temperature));
+                         break;
+                     case "ObservatoryName":
+                         OnPropertyChanged(nameof(ObservatoryName));
+                         break;
+                     case "LimitsOn":
+                         IsLimits= SkySettings.LimitsOn;
+                         break;
                      case "ParkPositions":
                          OnPropertyChanged("ParkPositions");
-                         ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                         if (ParkSelectionSetting == null && ParkPositions.Count > 0)
+                         {
+                             ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                         }
                          break;
                      case "DecBacklash":
                          DecBacklash = SkySettings.DecBacklash;
@@ -460,10 +617,14 @@ namespace GS.Server.SkyTelescope
                          Properties.Profile.Default.Save();
                          // Disconnect mount if currently connected. User must reconnect
                          if (SkyServer.IsMountRunning) ClickConnect();
+                         // Load all settimngs for new alignment mnode
+                         SkySettings.Load();
                          // Reset mount without connecting
                          SkyServer.MountReset();
                          // Update View Model with new settings
                          UpdateSkyTelescopeVM();
+                         // Refresh home axis display for new alignment mode
+                         RefreshHomeAxisDisplay();
                          // Set side of pier, flip and other alignment mode dependent UI elements
                          SideOfPierUIToolTip = GetResourceByMode("botTipSOP");
                          // Flip Button
@@ -473,6 +634,10 @@ namespace GS.Server.SkyTelescope
                          FlipDialogHeader = GetResourceByMode("btnFlip");
                          FlipDialogText = GetResourceByMode("btnContinueFlip");
                          TrackingLimitSettingsEnable = (SkySettings.AlignmentMode == AlignmentModes.algGermanPolar);
+                         // Auto Home Sensor Position Adjustment
+                         IsGermanPolarMode = (SkySettings.AlignmentMode == AlignmentModes.algGermanPolar);
+                         // Home Settings Dialog
+                         OnPropertyChanged("HomeSettingsDialogIsVisible");
 
                          SetShowUI();
                          // ReSharper disable ExplicitCallerInfoArgument
@@ -512,10 +677,15 @@ namespace GS.Server.SkyTelescope
         void UpdateSkyTelescopeVM()
         {
             // Set Park combo box information
-            ParkPositions = SkySettings.ParkPositions;
-            ParkSelection = ParkPositions.FirstOrDefault();
-            ParkSelectionSetting = ParkSelection;
+            OnPropertyChanged(nameof(ParkPositions));
+            if (ParkPositions.Count > 0)
+            {
+                ParkSelection = ParkPositions.FirstOrDefault();
+                ParkSelectionSetting = ParkSelection;
+            }
             AtPark = SkyServer.AtPark;
+
+            OnPropertyChanged(nameof(Observatories));
 
             // Settings drawer items
             string[] propertyList = { "ParkPositions",
@@ -582,8 +752,14 @@ namespace GS.Server.SkyTelescope
                                 case "IsHome":
                                     IsHome = SkyServer.IsHome;
                                     break;
+                                case "IsSop":
+                                    IsSop = SkyServer.IsSop;
+                                    break;
                                 case "AtPark":
                                     AtPark = SkyServer.AtPark;
+                                    break;
+                                case "IsInFlipZone":
+                                    IsInFlipZone = SkyServer.IsInFlipZone;
                                     break;
                                 case "IsSlewing":
                                     IsSlewing = SkyServer.IsSlewing;
@@ -855,10 +1031,82 @@ namespace GS.Server.SkyTelescope
             }
         }
 
+        private void PropertyChangedParkPositionViewModel(object sender, PropertyChangedEventArgs e)
+        {
+            try
+            {
+                // Forward PropertyChanged immediately without async invoke to ensure synchronous notification
+                switch (e.PropertyName)
+                {
+                    case "SettingsSelection":
+                        OnPropertyChanged(nameof(ParkSelectionSetting));
+                        break;
+                    case "Selection":
+                        OnPropertyChanged(nameof(ParkSelection));
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
         private void GlobalHookKeyPress(object sender, KeyPressEventArgs e)
         {
             if (!SkyServer.IsMountRunning) {return;}
             if (e.KeyChar == (char)27) {ClickStop();}
+        }
+
+        private void PropertyChangedObservatoryViewModel(object sender, PropertyChangedEventArgs e)
+        {
+            try
+            {
+                switch (e.PropertyName)
+                {
+                    case "SettingsSelection":
+                        OnPropertyChanged(nameof(ObservatorySelectionSetting));
+                        break;
+                    case "Selection":
+                        OnPropertyChanged(nameof(ObservatorySelection));
+                        OnPropertyChanged(nameof(ObservatoryName));
+                        UpdateLatitude();
+                        UpdateLongitude();
+                        OnPropertyChanged(nameof(Elevation));
+                        OnPropertyChanged(nameof(Temperature));
+                        break;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
         }
 
         /// <summary>
@@ -892,10 +1140,44 @@ namespace GS.Server.SkyTelescope
 
         private void LoadImages()
         {
-            if (!string.IsNullOrEmpty(ImageFile)) return;
-            var random = new Random();
-            ImageFiles = new List<string> { "M33.png", "Horsehead.png", "NGC6992.png", "Orion.png", "IC1396.png" };
-            ImageFile = "../Resources/" + ImageFiles[random.Next(ImageFiles.Count)];
+            try
+            {
+                if (!string.IsNullOrEmpty(ImageFile)) return;
+                var random = new Random();
+                var bGDir = AppDomain.CurrentDomain.BaseDirectory + "\\Models\\Bg\\";
+                
+                if (Directory.Exists(bGDir))
+                {
+                    var extensions = new[] { ".png", ".jpg", ".gif" };
+                    var userFiles = Directory.GetFiles(bGDir)
+                        .Where(f => extensions.Contains(Path.GetExtension(f).ToLower())).Select(Path.GetFileName)
+                        .ToList();
+                    if (userFiles.Count > 0)
+                    {
+                        ImageFiles = userFiles;
+                        ImageFile = bGDir + ImageFiles[random.Next(ImageFiles.Count)];
+                        return;
+                    }
+                }
+                
+                Directory.CreateDirectory(bGDir);
+                ImageFiles = new List<string> { "M33.png", "Horsehead.png", "NGC6992.png", "Orion.png", "IC1396.png" };
+                ImageFile = "../Resources/" + ImageFiles[random.Next(ImageFiles.Count)];
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Warning,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+            }
         }
 
         /// <summary>
@@ -1258,6 +1540,7 @@ namespace GS.Server.SkyTelescope
         }
         public IList<int> Range179 { get; }
         public IList<int> Range90 { get; }
+
         public int Lat1
         {
             get
@@ -1312,6 +1595,16 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
+        public double Latitude
+        {
+            get
+            {
+                var latitude = Math.Abs(Principles.Units.Deg2Dou(Lat1, Lat2, Lat3));
+                if (Lat0 == "S") { latitude = -latitude; }
+                return latitude;
+            }
+        }
+
         public IList<string> LongitudeRangeEw { get; }
         public string Long0
         {
@@ -1376,6 +1669,16 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
+        public double Longitude
+        {
+            get
+            {
+                var longitude = Math.Abs(Principles.Units.Deg2Dou(Long1, Long2, Long3));
+                if (Long0 == "W") { longitude = -longitude; }
+                return longitude;
+            }
+        }
+
         public bool GlobalStopOn
         {
             get => SkySettings.GlobalStopOn;
@@ -1482,17 +1785,15 @@ namespace GS.Server.SkyTelescope
                         OpenDialog($"{Application.Current.Resources["skyNoSelected"]}");
                         return;
                     }
+
                     var parkCoords = Axes.MountAxis2Mount();
-                    ParkSelectionSetting.X = parkCoords[0];
-                    ParkSelectionSetting.Y = parkCoords[1];
+                    if (parkCoords == null) return;
 
-                    var parkToUpdate = ParkPositions.FirstOrDefault(p => p.Name == ParkSelectionSetting.Name);
-                    if (parkToUpdate == null) return;
+                    // Capture position before UpdatePosition to avoid property re-evaluation after binding changes
+                    var positionToUpdate = ParkSelectionSetting;
 
-                    parkToUpdate.X = parkCoords[0];
-                    parkToUpdate.Y = parkCoords[1];
-                    SkySettings.ParkPositions = ParkPositions;
-                    OpenDialog($"{Application.Current.Resources["skyParkSaved"]} {parkToUpdate.Name}");
+                    ParkPositionViewModel.Instance.UpdatePosition(positionToUpdate, parkCoords[0], parkCoords[1]);
+                    OpenDialog($"{Application.Current.Resources["skyParkSaved"]} {positionToUpdate.Name}");
                     Synthesizer.Speak(Application.Current.Resources["vceParkSet"].ToString());
                 }
             }
@@ -1514,30 +1815,37 @@ namespace GS.Server.SkyTelescope
             }
         }
 
-        private ICommand _clickSaveSettingCommand;
-        public ICommand ClickSaveSettingsCommand
+        private ICommand _clickSaveObservatoryCommand;
+        public ICommand ClickSaveObservatoryCommand
         {
             get
             {
-                var command = _clickSaveSettingCommand;
+                var command = _clickSaveObservatoryCommand;
                 if (command != null)
                 {
                     return command;
                 }
 
-                return _clickSaveSettingCommand = new RelayCommand(
-                    param => ClickSaveSettings()
+                return _clickSaveObservatoryCommand = new RelayCommand(
+                    param => ClickSaveObservatory()
                 );
             }
         }
-        private void ClickSaveSettings()
+        private void ClickSaveObservatory()
         {
             try
             {
                 using (new WaitCursor())
                 {
-                    GSServer.SaveAllAppSettings();
-                    SkyServer.OpenSetupDialogFinished = true;
+                    if (ObservatorySelection == null)
+                    {
+                        OpenDialog($"{Application.Current.Resources["skyNoSelected"]}");
+                        return;
+                    }
+
+                    var obsToUpdate = new Observatory(ObservatorySelection.Name, Latitude, Longitude, Elevation, Temperature);
+                    ObservatoryViewModel.Instance.UpdateObservatory(obsToUpdate);
+                    OpenDialog($"{Application.Current.Resources["skyObsSaved"]} {obsToUpdate.Name}");
                 }
             }
             catch (Exception ex)
@@ -1553,7 +1861,6 @@ namespace GS.Server.SkyTelescope
                     Message = $"{ex.Message}|{ex.StackTrace}"
                 };
                 MonitorLog.LogToMonitor(monitorItem);
-
                 SkyServer.AlertState = true;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
@@ -2638,7 +2945,7 @@ namespace GS.Server.SkyTelescope
                         materialota = MaterialHelper.CreateMaterial(accentbrush);
                     }
                 }
-
+                
                 // iterate over objects in model: 0 is primary OTA, 1 is weights or secondary OTA, 2 is bar
                 for (int i = 0; i < model.Children.Count; i++)
                     switch (i)
@@ -2867,11 +3174,12 @@ namespace GS.Server.SkyTelescope
                 var modelVm = ModelVm.Model1Vm;
                 modelVm.WinHeight = 320;
                 modelVm.WinWidth = 250;
+                // Set camera values BEFORE Show() so SyncCameraFromViewModel fires with correct data.
+                modelVm.CameraIndex = 2;
                 modelVm.Position = Position;
                 modelVm.LookDirection = LookDirection;
                 modelVm.UpDirection = UpDirection;
                 modelVm.ImageFile = ImageFile;
-                modelVm.CameraIndex = 2;
                 bWin.Show();
             }
             catch (Exception ex)
@@ -2909,22 +3217,17 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
-                if (Numbers.IsNaNVector3D(LookDirection) || Numbers.Is0Vector3D(LookDirection))
-                {
+                // Repair persisted settings if they are invalid before restoring.
+                if (Numbers.IsNaNVector3D(Settings.Settings.ModelLookDirection2) || Numbers.Is0Vector3D(Settings.Settings.ModelLookDirection2))
                     Settings.Settings.ModelLookDirection2 = new Vector3D(-900, -1100, -400);
-                }
 
-                if (Numbers.IsNaNVector3D(UpDirection) || Numbers.Is0Vector3D(UpDirection))
-                {
+                if (Numbers.IsNaNVector3D(Settings.Settings.ModelUpDirection2) || Numbers.Is0Vector3D(Settings.Settings.ModelUpDirection2))
                     Settings.Settings.ModelUpDirection2 = new Vector3D(.35, .43, .82);
-                }
 
-                if (Numbers.IsNaNPoint3D(Position) || Numbers.Is0Point3D(Position))
-                {
+                if (Numbers.IsNaNPoint3D(Settings.Settings.ModelPosition2) || Numbers.Is0Point3D(Settings.Settings.ModelPosition2))
                     Settings.Settings.ModelPosition2 = new Point3D(900, 1100, 800);
-                }
 
-                LoadTelescopeModel();
+                RefreshView();
             }
             catch (Exception ex)
             {
@@ -2965,6 +3268,7 @@ namespace GS.Server.SkyTelescope
                 Settings.Settings.ModelUpDirection2 = UpDirection;
                 Settings.Settings.ModelPosition2 = Position;
                 Settings.Settings.Save();
+                OpenDialog($"{Application.Current.Resources["gpSave"]}", $"{Application.Current.Resources["gpSave"]}");
             }
             catch (Exception ex)
             {
@@ -2981,6 +3285,23 @@ namespace GS.Server.SkyTelescope
                 MonitorLog.LogToMonitor(monitorItem);
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
+        }
+
+        /// <summary>
+        /// Restores the saved camera position/direction from Settings onto the VM properties
+        /// and re-applies the current telescope axis rotation. Does NOT reload the .obj model.
+        /// The VM property changes trigger SyncCameraFromViewModel in HelixViewport3D.xaml.cs.
+        /// </summary>
+        private void RefreshView()
+        {
+            // Restore camera from persisted settings slot 2 (SkyTelescopeVm always uses slot 2).
+            LookDirection = Settings.Settings.ModelLookDirection2;
+            UpDirection   = Settings.Settings.ModelUpDirection2;
+            Position      = Settings.Settings.ModelPosition2;
+
+            // Re-apply telescope rotation to current axis positions.
+            Rotate();
+            SetPierSideIndicator();
         }
 
         #endregion
@@ -3144,55 +3465,76 @@ namespace GS.Server.SkyTelescope
             }
         }
 
-        private List<ParkPosition> _parkPositions;
-        public List<ParkPosition> ParkPositions
-        {
-            get => SkySettings.ParkPositions;
-            set
-            {
-                if (_parkPositions == value) return;
-                _parkPositions = value;
-                SkySettings.ParkPositions = value;
-                OnPropertyChanged();
-            }
-        }
+        public ObservableCollection<ParkPosition> ParkPositions => ParkPositionViewModel.Instance.Positions;
 
-        private ParkPosition _parkSelection;
         public ParkPosition ParkSelection
         {
-            get => _parkSelection;
-            set
-            {
-                if (_parkSelection == value) return;
-
-                var found = ParkPositions.Find(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
-                if (found == null) // did not find match in list
-                {
-                    ParkPositions.Add(value);
-                    _parkSelection = value;
-                    SkyServer.ParkSelected = value;
-                }
-                else
-                {
-                    _parkSelection = found;
-                    SkyServer.ParkSelected = found;
-                }
-                OnPropertyChanged();
-            }
+            get => ParkPositionViewModel.Instance.Selection;
+            set => ParkPositionViewModel.Instance.Selection = value;
         }
 
-        private ParkPosition _parkSelectionSetting;
         public ParkPosition ParkSelectionSetting
         {
-            get => _parkSelectionSetting;
+            get
+            {
+                var value = ParkPositionViewModel.Instance.SettingsSelection;
+                return value;
+            }
             set
             {
-                if (_parkSelectionSetting == value) return;
-                _parkSelectionSetting = value;
+                ParkPositionViewModel.Instance.SettingsSelection = value;
+            }
+        }
+
+        public ObservableCollection<Observatory> Observatories => ObservatoryViewModel.Instance.Observatories;
+
+        public Observatory ObservatorySelection
+        {
+            get => ObservatoryViewModel.Instance.Selection;
+            set => ObservatoryViewModel.Instance.Selection = value;
+        }
+
+        public Observatory ObservatorySelectionSetting
+        {
+            get
+            {
+                var value = ObservatoryViewModel.Instance.SettingsSelection;
+                return value;
+            } 
+            set
+            {
+                ObservatoryViewModel.Instance.SettingsSelection = value;
+            }
+        }
+
+        public string ObservatoryName
+        {
+            get => SkySettings.ObservatoryName;
+            set
+            {
+                // Always resolve the requested observatory first
+                var selected = Observatories?
+                    .FirstOrDefault(o => string.Equals(o.Name, value, StringComparison.OrdinalIgnoreCase));
+
+                if (selected == null) return;
+
+                // Keep VM selection in sync with dropdown selection
+                if (!ReferenceEquals(ObservatorySelection, selected))
+                {
+                    ObservatorySelection = selected; // ObservatoryViewModel.Selection setter updates SkySettings.ObservatoryName
+                    OnPropertyChanged(nameof(ObservatorySelection));
+                }
+
+                // Defensive: ensure setting reflects selected item
+                if (!string.Equals(SkySettings.ObservatoryName, selected.Name, StringComparison.OrdinalIgnoreCase))
+                {
+                    SkySettings.ObservatoryName = selected.Name;
+                }
+
                 OnPropertyChanged();
             }
         }
-        
+
         private bool _pecOn;
         public bool PecOn
         {
@@ -3232,7 +3574,14 @@ namespace GS.Server.SkyTelescope
                     if (parked)
                     {
                         SkyServer.AtPark = false;
-                        SkyServer.Tracking = AlignmentMode != AlignmentModes.algAltAz;
+                        if (SkySettings.TrackAfterUnpark)
+                        {
+                            SkyServer.Tracking = (AlignmentMode != AlignmentModes.algAltAz);
+                        }
+                        else
+                        {
+                            SkyServer.Tracking = false;
+                        }
                     }
                     else
                     {
@@ -3296,6 +3645,18 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
+        
+        private string _sopBadgeContent;
+        public string SopBadgeContent
+        {
+            get => _sopBadgeContent;
+            set
+            {
+                if (SopBadgeContent == value) return;
+                _sopBadgeContent = value;
+                OnPropertyChanged();
+            }
+        }
 
         private string _pecBadgeContent;
         public string PecBadgeContent
@@ -3317,6 +3678,32 @@ namespace GS.Server.SkyTelescope
             {
                 if (TrackingBadgeContent == value) return;
                 _trackingBadgeContent = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private string _limitsBadgeContent;
+        public string LimitsBadgeContent
+        {
+            get => _limitsBadgeContent;
+            set
+            {
+                if (LimitsBadgeContent == value) return;
+                _limitsBadgeContent = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _isLimits;
+        public bool IsLimits
+        {
+            get => _isLimits;
+            set
+            {
+
+                _isLimits = value;
+                SkySettings.LimitsOn = value;
+                LimitsBadgeContent = value ? Application.Current.Resources["btnHintTracking"].ToString() : "";
                 OnPropertyChanged();
             }
         }
@@ -3478,6 +3865,51 @@ namespace GS.Server.SkyTelescope
             }
         }
 
+        private ICommand _clickLimitsCmd;
+        public ICommand ClickLimitsCommand
+        {
+            get
+            {
+                var command = _clickLimitsCmd;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _clickLimitsCmd = new RelayCommand(
+                    param => ClickLimits()
+                );
+            }
+        }
+        private void ClickLimits()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    SkySettings.LimitsOn = !SkySettings.LimitsOn;
+                    Synthesizer.Speak(SkySettings.LimitsOn ? Application.Current.Resources["vceLimitsOn"].ToString() : Application.Current.Resources["vceLimitsOff"].ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+        
         private ICommand _clickPecOnCmd;
         public ICommand ClickPecOnCmd
         {
@@ -4206,6 +4638,104 @@ namespace GS.Server.SkyTelescope
 
         #region Hand Controller
 
+        private Brush _bgColorE;
+        public Brush BgColorE
+        {
+            get =>  _bgColorE;
+            set
+            {
+                _bgColorE = value;
+                OnPropertyChanged();
+            }
+        }
+        private Brush _bgColorW;
+        public Brush BgColorW
+        {
+            get =>  _bgColorW;
+            set
+            {
+                _bgColorW = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorN;
+        public Brush BgColorN
+        {
+            get =>  _bgColorN;
+            set
+            {
+                _bgColorN = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorS;
+        public Brush BgColorS
+        {
+            get =>  _bgColorS;
+            set
+            {
+                _bgColorS = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorNe;
+        public Brush BgColorNe
+        {
+            get =>  _bgColorNe;
+            set
+            {
+                _bgColorNe = value;
+                OnPropertyChanged();
+            }
+        }
+        
+        private Brush _bgColorNw;
+        public Brush BgColorNw
+        {
+            get =>  _bgColorNw;
+            set
+            {
+                _bgColorNw = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorSe;
+        public Brush BgColorSe
+        {
+            get =>  _bgColorSe;
+            set
+            {
+                _bgColorSe = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorSw;
+        public Brush BgColorSw
+        {
+            get =>  _bgColorSw;
+            set
+            {
+                _bgColorSw = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private Brush _bgColorStop;
+        public Brush BgColorStop
+        {
+            get =>  _bgColorStop;
+            set
+            {
+                _bgColorStop = value;
+                OnPropertyChanged();
+            }
+        }
+
         private double _hcSpeed;
         public double HcSpeed
         {
@@ -4224,6 +4754,20 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
+        
+        private bool _hcOneClickStart;
+        public bool HcOneClickStart
+        {
+            get => _hcOneClickStart;
+            set
+            {
+                _hcOneClickStart = value;
+                SkySettings.HcOneClickStart = _hcOneClickStart;
+                OnPropertyChanged();
+            }
+        }
+        public HcOneClickType HcOneClickStop { get; set; }
+
         public bool FlipNs
         {
             get => SkySettings.HcFlipNs;
@@ -4233,7 +4777,6 @@ namespace GS.Server.SkyTelescope
                 OnPropertyChanged();
             }
         }
-
         public bool FlipEw
         {
             get => SkySettings.HcFlipEw;
@@ -4365,7 +4908,6 @@ namespace GS.Server.SkyTelescope
                     throw new ArgumentOutOfRangeException();
             }
         }
-
         public HcMode HcMode
         {
             get => SkySettings.HcMode;
@@ -4482,12 +5024,15 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                BgColorW = AccentColor;
                 if (SkyServer.AtPark)
                 {
                     BlinkParked();
                     Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
                     return;
                 }
+
+                if(OneClickDownCheck(HcOneClickType.Left)){return;}
                 StartSlew(FlipEw && EwEnabled ? SlewDirection.SlewRight : SlewDirection.SlewLeft);
             }
             catch (Exception ex)
@@ -4504,6 +5049,7 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
 
+                BgColorW = PrimaryColor;
                 SkyServer.AlertState = true;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
@@ -4528,6 +5074,8 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                if(OneClickUpCheck(HcOneClickType.Left)){return;}
+                BgColorW = PrimaryColor;
                 StartSlew(SlewDirection.SlewNoneRa);
             }
             catch (Exception ex)
@@ -4568,12 +5116,15 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                BgColorE = AccentColor;
                 if (SkyServer.AtPark)
                 {
                     BlinkParked();
                     Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
                     return;
                 }
+
+                if(OneClickDownCheck(HcOneClickType.Right)){return;}
                 StartSlew(FlipEw && EwEnabled ? SlewDirection.SlewLeft : SlewDirection.SlewRight);
             }
             catch (Exception ex)
@@ -4590,6 +5141,7 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
 
+                BgColorE = PrimaryColor;
                 SkyServer.AlertState = true;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
@@ -4614,6 +5166,8 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                if(OneClickUpCheck(HcOneClickType.Right)){return;}
+                BgColorE = PrimaryColor;
                 StartSlew(SlewDirection.SlewNoneRa);
             }
             catch (Exception ex)
@@ -4654,12 +5208,15 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                BgColorN = AccentColor;
                 if (SkyServer.AtPark)
                 {
                     BlinkParked();
                     Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
                     return;
                 }
+
+                if(OneClickDownCheck(HcOneClickType.Up)){return;}
                 StartSlew(FlipNs && NsEnabled ? SlewDirection.SlewDown : SlewDirection.SlewUp);
             }
             catch (Exception ex)
@@ -4676,6 +5233,7 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
 
+                BgColorN = PrimaryColor;
                 SkyServer.AlertState = true;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
@@ -4700,6 +5258,8 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                if(OneClickUpCheck(HcOneClickType.Up)){return;}
+                BgColorN = PrimaryColor;
                 StartSlew(SlewDirection.SlewNoneDec);
             }
             catch (Exception ex)
@@ -4740,12 +5300,14 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                BgColorS = AccentColor;
                 if (SkyServer.AtPark)
                 {
                     BlinkParked();
                     Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
                     return;
                 }
+                if(OneClickDownCheck(HcOneClickType.Down)){return;}
                 StartSlew(FlipNs && NsEnabled ? SlewDirection.SlewUp : SlewDirection.SlewDown);
             }
             catch (Exception ex)
@@ -4762,6 +5324,7 @@ namespace GS.Server.SkyTelescope
                 };
                 MonitorLog.LogToMonitor(monitorItem);
 
+                BgColorS = PrimaryColor;
                 SkyServer.AlertState = true;
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
@@ -4786,6 +5349,8 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
+                if(OneClickUpCheck(HcOneClickType.Down)){return;}
+                BgColorS = PrimaryColor;
                 StartSlew(SlewDirection.SlewNoneDec);
             }
             catch (Exception ex)
@@ -4825,8 +5390,429 @@ namespace GS.Server.SkyTelescope
         {
             try
             {
-                //_ctsSpiral?.Cancel();
+                BgColorStop = AccentColor;
                 SkyServer.AbortSlew(true);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                ResetHcButtonColors();
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseUpStopCommand;
+        public ICommand HcMouseUpStopCommand
+        {
+            get
+            {
+                var command = _hcMouseUpStopCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseUpStopCommand = new RelayCommand(param => HcMouseUpStop());
+            }
+            set => _hcMouseUpStopCommand = value;
+        }
+        private void HcMouseUpStop()
+        {
+            try
+            {
+                ResetHcButtonColors();
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                ResetHcButtonColors();
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseDownNeCommand;
+        public ICommand HcMouseDownNeCommand
+        {
+            get
+            {
+                var command = _hcMouseDownNeCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseDownNeCommand = new RelayCommand(param => HcMouseDownNe());
+            }
+            set => _hcMouseDownNeCommand = value;
+        }
+        private void HcMouseDownNe()
+        {
+            try
+            {
+                BgColorNe = AccentColor;
+                if (SkyServer.AtPark)
+                {
+                    BlinkParked();
+                    Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
+                    return;
+                }
+                if(OneClickDownCheck(HcOneClickType.Ne)){return;}
+                var ns = FlipNs && NsEnabled;
+                var ew = FlipEw && EwEnabled;
+                StartSlew(!ns && !ew ? SlewDirection.SlewNorthEast :
+                           ns && !ew ? SlewDirection.SlewSouthEast :
+                          !ns &&  ew ? SlewDirection.SlewNorthWest :
+                                       SlewDirection.SlewSouthWest);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                BgColorNe = PrimaryColor;
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseUpNeCommand;
+        public ICommand HcMouseUpNeCommand
+        {
+            get
+            {
+                var command = _hcMouseUpNeCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseUpNeCommand = new RelayCommand(param => HcMouseUpNe());
+            }
+            set => _hcMouseUpNeCommand = value;
+        }
+        private void HcMouseUpNe()
+        {
+            try
+            {
+                if(OneClickUpCheck(HcOneClickType.Ne)){return;}
+                BgColorNe = PrimaryColor;
+                StartSlew(SlewDirection.SlewNoneDec);
+                StartSlew(SlewDirection.SlewNoneRa);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseDownNwCommand;
+        public ICommand HcMouseDownNwCommand
+        {
+            get
+            {
+                var command = _hcMouseDownNwCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseDownNwCommand = new RelayCommand(param => HcMouseDownNw());
+            }
+            set => _hcMouseDownNwCommand = value;
+        }
+        private void HcMouseDownNw()
+        {
+            try
+            {
+                BgColorNw = AccentColor;
+                if (SkyServer.AtPark)
+                {
+                    BlinkParked();
+                    Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
+                    return;
+                }
+                if(OneClickDownCheck(HcOneClickType.Nw)){return;}
+                var ns = FlipNs && NsEnabled;
+                var ew = FlipEw && EwEnabled;
+                StartSlew(!ns && !ew ? SlewDirection.SlewNorthWest :
+                           ns && !ew ? SlewDirection.SlewSouthWest :
+                          !ns &&  ew ? SlewDirection.SlewNorthEast :
+                                       SlewDirection.SlewSouthEast);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                BgColorNw = PrimaryColor;
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseUpNwCommand;
+        public ICommand HcMouseUpNwCommand
+        {
+            get
+            {
+                var command = _hcMouseUpNwCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseUpNwCommand = new RelayCommand(param => HcMouseUpNw());
+            }
+            set => _hcMouseUpNwCommand = value;
+        }
+        private void HcMouseUpNw()
+        {
+            try
+            {
+                if(OneClickUpCheck(HcOneClickType.Nw)){return;}
+                BgColorNw = PrimaryColor;
+                StartSlew(SlewDirection.SlewNoneDec);
+                StartSlew(SlewDirection.SlewNoneRa);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseDownSeCommand;
+        public ICommand HcMouseDownSeCommand
+        {
+            get
+            {
+                var command = _hcMouseDownSeCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseDownSeCommand = new RelayCommand(param => HcMouseDownSe());
+            }
+            set => _hcMouseDownSeCommand = value;
+        }
+        private void HcMouseDownSe()
+        {
+            try
+            {
+                BgColorSe = AccentColor;
+                if (SkyServer.AtPark)
+                {
+                    BlinkParked();
+                    Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
+                    return;
+                }
+                if(OneClickDownCheck(HcOneClickType.Se)){return;}
+                var ns = FlipNs && NsEnabled;
+                var ew = FlipEw && EwEnabled;
+                StartSlew(!ns && !ew ? SlewDirection.SlewSouthEast :
+                           ns && !ew ? SlewDirection.SlewNorthEast :
+                          !ns &&  ew ? SlewDirection.SlewSouthWest :
+                                       SlewDirection.SlewNorthWest);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                BgColorSe = PrimaryColor;
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseUpSeCommand;
+        public ICommand HcMouseUpSeCommand
+        {
+            get
+            {
+                var command = _hcMouseUpSeCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseUpSeCommand = new RelayCommand(param => HcMouseUpSe());
+            }
+            set => _hcMouseUpSeCommand = value;
+        }
+        private void HcMouseUpSe()
+        {
+            try
+            {
+                if(OneClickUpCheck(HcOneClickType.Se)){return;}
+                BgColorSe = PrimaryColor;
+                StartSlew(SlewDirection.SlewNoneDec);
+                StartSlew(SlewDirection.SlewNoneRa);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseDownSwCommand;
+        public ICommand HcMouseDownSwCommand
+        {
+            get
+            {
+                var command = _hcMouseDownSwCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseDownSwCommand = new RelayCommand(param => HcMouseDownSw());
+            }
+            set => _hcMouseDownSwCommand = value;
+        }
+        private void HcMouseDownSw()
+        {
+            try
+            {
+                BgColorSw = AccentColor;
+                if (SkyServer.AtPark)
+                {
+                    BlinkParked();
+                    Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
+                    return;
+                }
+                if(OneClickDownCheck(HcOneClickType.Sw)){return;}
+                var ns = FlipNs && NsEnabled;
+                var ew = FlipEw && EwEnabled;
+                StartSlew(!ns && !ew ? SlewDirection.SlewSouthWest :
+                           ns && !ew ? SlewDirection.SlewNorthWest :
+                          !ns &&  ew ? SlewDirection.SlewSouthEast :
+                                       SlewDirection.SlewNorthEast);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                BgColorSw = PrimaryColor;
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _hcMouseUpSwCommand;
+        public ICommand HcMouseUpSwCommand
+        {
+            get
+            {
+                var command = _hcMouseUpSwCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _hcMouseUpSwCommand = new RelayCommand(param => HcMouseUpSw());
+            }
+            set => _hcMouseUpSwCommand = value;
+        }
+        private void HcMouseUpSw()
+        {
+            try
+            {
+                if(OneClickUpCheck(HcOneClickType.Sw)){return;}
+                BgColorSw = PrimaryColor;
+                StartSlew(SlewDirection.SlewNoneDec);
+                StartSlew(SlewDirection.SlewNoneRa);
             }
             catch (Exception ex)
             {
@@ -4967,7 +5953,6 @@ namespace GS.Server.SkyTelescope
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
         }
-
         private void StartSlew(SlewDirection direction)
         {
             // No action when at park
@@ -5050,11 +6035,108 @@ namespace GS.Server.SkyTelescope
                 case SlewDirection.SlewNoneDec:
                     SkyServer.HcMoves(speed, SlewDirection.SlewNoneDec, HcMode, HcAntiRa, HcAntiDec, RaBacklash, DecBacklash);
                     break;
+                case SlewDirection.SlewNorthEast:
+                    SkyServer.HcMoves(speed, SlewDirection.SlewNorthEast, HcMode, HcAntiRa, HcAntiDec, RaBacklash, DecBacklash);
+                    break;
+                case SlewDirection.SlewNorthWest:
+                    SkyServer.HcMoves(speed, SlewDirection.SlewNorthWest, HcMode, HcAntiRa, HcAntiDec, RaBacklash, DecBacklash);
+                    break;
+                case SlewDirection.SlewSouthEast:
+                    SkyServer.HcMoves(speed, SlewDirection.SlewSouthEast, HcMode, HcAntiRa, HcAntiDec, RaBacklash, DecBacklash);
+                    break;
+                case SlewDirection.SlewSouthWest:
+                    SkyServer.HcMoves(speed, SlewDirection.SlewSouthWest, HcMode, HcAntiRa, HcAntiDec, RaBacklash, DecBacklash);
+                    break;
                 default:
                     throw new ArgumentOutOfRangeException();
             }
         }
-        
+        private bool OneClickDownCheck(HcOneClickType a)
+        {
+            var ret = false;
+            if (HcOneClickStart)
+            {
+                if (HcOneClickStop != HcOneClickType.Na)
+                {
+                    HcOneClickSwitch();
+                    ret = true;
+                }
+                else
+                {
+                    HcOneClickStop = a;    
+                }
+            }
+            return ret;
+        }
+        private bool OneClickUpCheck(HcOneClickType a)
+        {
+            var ret = false;
+            if (HcOneClickStart)
+            {
+                if (HcOneClickStop == a)
+                {
+                    ret = true;
+                }
+                else
+                {
+                    HcOneClickStop = HcOneClickType.Na;   
+                }
+            }
+            return ret;
+        }
+        private void ResetHcButtonColors()
+        {
+            BgColorE = PrimaryColor;
+            BgColorW = PrimaryColor;
+            BgColorN = PrimaryColor;
+            BgColorS = PrimaryColor;
+            BgColorNe = PrimaryColor;
+            BgColorNw = PrimaryColor;
+            BgColorSe = PrimaryColor;
+            BgColorSw = PrimaryColor;
+            BgColorStop = PrimaryColor;
+            HcOneClickStop = HcOneClickType.Na;
+        }
+        private void HcOneClickSwitch()
+        {
+            var t = HcOneClickStop;
+            HcOneClickStop = HcOneClickType.Na;
+
+            switch (t)
+            {
+                case HcOneClickType.Up:
+                    HcMouseUpUp();
+                    break;
+                case HcOneClickType.Down:
+                    HcMouseUpDown();
+                    break;
+                case HcOneClickType.Left:
+                    HcMouseUpLeft();
+                    break;
+                case HcOneClickType.Right:
+                    HcMouseUpRight();
+                    break;
+                case HcOneClickType.Ne:
+                    HcMouseUpNe();
+                    break;
+                case HcOneClickType.Nw:
+                    HcMouseUpNw();
+                    break;
+                case HcOneClickType.Se:
+                    HcMouseUpSe();
+                    break;
+                case HcOneClickType.Sw:
+                    HcMouseUpSw();
+                    break;
+                case HcOneClickType.Stop:
+                    HcMouseUpStop();
+                    break;
+                case HcOneClickType.Na:
+                    break;
+                default:
+                    throw new ArgumentOutOfRangeException();
+            }
+        }
         #endregion
 
         #region HC Locked Mouse
@@ -6181,6 +7263,15 @@ namespace GS.Server.SkyTelescope
 
         #region Bottom Bar Control
 
+        public string Axis0Version
+        {
+            get => SkyServer.AxesVersion[0];
+        }
+        public string Axis1Version
+        {
+            get => SkyServer.AxesVersion[1];
+        }
+
         private bool _isHome;
         public bool IsHome
         {
@@ -6190,6 +7281,19 @@ namespace GS.Server.SkyTelescope
                 if (IsHome == value) return;
                 _isHome = value;
                 HomeBadgeContent = value ? Application.Current.Resources["btnBadgeHome"].ToString() : "";
+                OnPropertyChanged();
+            }
+        }
+        
+        private bool _isSop;
+        public bool IsSop
+        {
+            get => _isSop;
+            set
+            {
+                if (_isSop == value) return;
+                _isSop = value;
+                SopBadgeContent = value ? Application.Current.Resources["btnHintTracking"].ToString() : "";
                 OnPropertyChanged();
             }
         }
@@ -6638,6 +7742,24 @@ namespace GS.Server.SkyTelescope
             }
         }
 
+        private bool _isGermanPolarMode;
+        /// <summary>
+        /// Indicates whether the current alignment mode is GermanPolar.
+        /// Sensor position adjustment is only available for GermanPolar mounts.
+        /// </summary>
+        public bool IsGermanPolarMode
+        {
+            get => _isGermanPolarMode;
+            set
+            {
+                if (_isGermanPolarMode == value) return;
+                _isGermanPolarMode = value;
+                OnPropertyChanged();
+            }
+        }
+        // When set, ClickOkDialog restores this content instead of closing the dialog
+        private object _returnDialogContent;
+
         private ICommand _openDialogCommand;
         public ICommand OpenDialogCommand
         {
@@ -6706,8 +7828,16 @@ namespace GS.Server.SkyTelescope
         }
         private void ClickOkDialog()
         {
-            IsDialogOpen = false;
-            LockOn = false;
+            if (_returnDialogContent != null)
+            {
+                DialogContent = _returnDialogContent;
+                _returnDialogContent = null;
+            }
+            else
+            {
+                IsDialogOpen = false;
+                LockOn = false;
+            }
         }
 
         private ICommand _clickCancelDialogCommand;
@@ -6729,6 +7859,60 @@ namespace GS.Server.SkyTelescope
         private void ClickCancelDialog()
         {
             IsDialogOpen = false;
+        }
+
+        private ICommand _resetSensorPositionCommand;
+        public ICommand ResetSensorPositionCommand
+        {
+            get
+            {
+                var command = _resetSensorPositionCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _resetSensorPositionCommand = new RelayCommand(
+                    param => ResetSensorPosition()
+                );
+            }
+        }
+        private void ResetSensorPosition()
+        {
+            try
+            {
+                // Reset sensor positions to ideal defaults
+                AutoHomeAxisX = 90.0;
+                AutoHomeAxisY = 90.0;
+
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Information,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = "AutoHome sensor positions reset to default: Ra=90.0, Dec=90.0"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
         }
 
         private ICommand _runMessageDialog;
@@ -6773,6 +7957,17 @@ namespace GS.Server.SkyTelescope
             {
                 if (value == SkySettings.CanSetPark) return;
                 SkySettings.CanSetPark = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public bool TrackAfterUnpark    
+        {
+            get => SkySettings.TrackAfterUnpark;
+            set
+            {
+                if (value == SkySettings.TrackAfterUnpark) return;
+                SkySettings.TrackAfterUnpark = value;
                 OnPropertyChanged();
             }
         }
@@ -7034,7 +8229,7 @@ namespace GS.Server.SkyTelescope
             {
                 if (_reSyncParkSelection == value) { return; }
 
-                var found = ParkPositions.Find(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
+                var found = ParkPositions.FirstOrDefault(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
                 if (found == null) // did not find match in list
                 {
                     ParkPositions.Add(value);
@@ -7271,11 +8466,7 @@ namespace GS.Server.SkyTelescope
                 using (new WaitCursor())
                 {
                     if (ParkSelectionSetting == null) return;
-                    //if (ParkPositions.Count == 1) return;
-                    ParkPositions.Remove(ParkSelectionSetting);
-                    SkySettings.ParkPositions = ParkPositions;
-                    ParkSelectionSetting = ParkPositions.FirstOrDefault();
-                    ParkSelection = ParkPositions.FirstOrDefault();
+                    ParkPositionViewModel.Instance.DeletePosition(ParkSelectionSetting);
                     IsDialogOpen = false;
                 }
             }
@@ -7420,13 +8611,30 @@ namespace GS.Server.SkyTelescope
                 using (new WaitCursor())
                 {
                     if (string.IsNullOrEmpty(ParkNewName)) return;
-                    var pp = new ParkPosition { Name = ParkNewName.Trim() };
-                    ParkPositions.Add(pp);
-                    SkySettings.ParkPositions = ParkPositions;
-                    ParkSelectionSetting = pp;
-                    ParkSelection = ParkPositions.FirstOrDefault();
+
+                    var axes = Axes.MountAxis2Mount();
+                    if (axes == null) return;
+
+                    ParkPositionViewModel.Instance.AddPosition(ParkNewName.Trim(), axes[0], axes[1]);
                     IsDialogOpen = false;
                 }
+            }
+            catch (InvalidOperationException ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Warning,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = ex.Message
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
             catch (Exception ex)
             {
@@ -7462,6 +8670,298 @@ namespace GS.Server.SkyTelescope
             }
         }
         private void CancelParkAddDialog()
+        {
+            try
+            {
+                IsDialogOpen = false;
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        #endregion
+
+        #region Observatory Delete Dialog
+
+        private ICommand _openObservatoryDeleteDialogCommand;
+        public ICommand OpenObservatoryDeleteDialogCommand
+        {
+            get
+            {
+                var command = _openObservatoryDeleteDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _openObservatoryDeleteDialogCommand = new RelayCommand(
+                    param => OpenObservatoryDeleteDialog()
+                );
+            }
+        }
+        private void OpenObservatoryDeleteDialog()
+        {
+            try
+            {
+                DialogContent = new ObservatoryDeleteDialog();
+                IsDialogOpen = true;
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _acceptObservatoryDeleteDialogCommand;
+        public ICommand AcceptObservatoryDeleteDialogCommand
+        {
+            get
+            {
+                var command = _acceptObservatoryDeleteDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _acceptObservatoryDeleteDialogCommand = new RelayCommand(
+                    param => AcceptObservatoryDeleteDialog()
+                );
+            }
+        }
+        private void AcceptObservatoryDeleteDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    if (ObservatorySelectionSetting == null) return;
+                    ObservatoryViewModel.Instance.DeleteObservatory(ObservatorySelectionSetting);
+                    IsDialogOpen = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _cancelObservatoryDeleteDialogCommand;
+        public ICommand CancelObservatoryDeleteDialogCommand
+        {
+            get
+            {
+                var command = _cancelObservatoryDeleteDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _cancelObservatoryDeleteDialogCommand = new RelayCommand(
+                    param => CancelObservatoryDeleteDialog()
+                );
+            }
+        }
+        private void CancelObservatoryDeleteDialog()
+        {
+            try
+            {
+                IsDialogOpen = false;
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        #endregion
+
+        #region Observatory Add Dialog
+
+        private string _observatoryNewName;
+        public string ObservatoryNewName
+        {
+            get => _observatoryNewName;
+            set
+            {
+                if (_observatoryNewName == value) return;
+                _observatoryNewName = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private ICommand _openObservatoryAddDialogCommand;
+        public ICommand OpenObservatoryAddDialogCommand
+        {
+            get
+            {
+                var command = _openObservatoryAddDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _openObservatoryAddDialogCommand = new RelayCommand(
+                    param => OpenObservatoryAddDialog()
+                );
+            }
+        }
+        private void OpenObservatoryAddDialog()
+        {
+            try
+            {
+                ObservatoryNewName = null;
+                DialogContent = new ObservatoryAddDialog();
+                IsDialogOpen = true;
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _acceptObservatoryAddDialogCommand;
+        public ICommand AcceptObservatoryAddDialogCommand
+        {
+            get
+            {
+                var command = _acceptObservatoryAddDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _acceptObservatoryAddDialogCommand = new RelayCommand(
+                    param => AcceptObservatoryAddDialog()
+                );
+            }
+        }
+        private void AcceptObservatoryAddDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    if (string.IsNullOrEmpty(ObservatoryNewName)) return;
+                    ObservatoryViewModel.Instance.AddObservatory(ObservatoryNewName.Trim());
+                    IsDialogOpen = false;
+                }
+            }
+            catch (InvalidOperationException ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Warning,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = ex.Message
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _cancelObservatoryAddDialogCommand;
+        public ICommand CancelObservatoryAddDialogCommand
+        {
+            get
+            {
+                var command = _cancelObservatoryAddDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _cancelObservatoryAddDialogCommand = new RelayCommand(
+                    param => CancelObservatoryAddDialog()
+                );
+            }
+        }
+        private void CancelObservatoryAddDialog()
         {
             try
             {
@@ -7865,6 +9365,20 @@ namespace GS.Server.SkyTelescope
             {
                 _flipOnGoto = value;
                 OnPropertyChanged();
+            }
+        }
+
+        private bool _isInFlipZone;
+        public bool IsInFlipZone
+        {
+            get => _isInFlipZone;
+            set
+            {
+                {
+                    if (IsInFlipZone == value) return;
+                    _isInFlipZone = value;
+                    OnPropertyChanged();
+                }
             }
         }
 
@@ -8431,12 +9945,12 @@ namespace GS.Server.SkyTelescope
                         Message = $"From|{SkyServer.ActualAxisX}|{SkyServer.ActualAxisY}|to|{radec.X}|{radec.Y}"
                     };
                     MonitorLog.LogToMonitor(monitorItem);
-                    if (SkySettings.AlignmentMode == AlignmentModes.algAltAz)
-                    {
+                    //if (SkySettings.AlignmentMode == AlignmentModes.algAltAz)
+                    //{
                         SkyServer.TargetRa = GoToRa;
                         SkyServer.TargetDec = GoToDec;
                         SkyServer.Tracking = true;
-                    }
+                    //}
                     SkyServer.SlewRaDec(radec.X, radec.Y, SkyServer.Tracking);
                     IsDialogOpen = false;
                 }
@@ -9237,7 +10751,7 @@ namespace GS.Server.SkyTelescope
         // Meridian Limits Options
         private void SetParkLimitSelection(string name)
         {
-            var found = ParkPositions.Find(x => x.Name == name);
+            var found = ParkPositions.FirstOrDefault(x => x.Name == name);
             ParkLimitSelection = found ?? ParkPositions.FirstOrDefault();
         }
 
@@ -9292,8 +10806,20 @@ namespace GS.Server.SkyTelescope
         // Horizon Limits Options
         private void SetParkHzLimitSelection(string name)
         {
-            var found = ParkPositions.Find(x => x.Name == name);
+            var found = ParkPositions.FirstOrDefault(x => x.Name == name);
             ParkHzLimitSelection = found ?? ParkPositions.FirstOrDefault();
+        }
+
+        private bool _hzlimitSlewing;
+        public bool HzLimitSlewing
+        {
+            get => _hzlimitSlewing;
+            set
+            {
+                _hzlimitSlewing = value;
+                SkySettings.HzLimitSlewing = value;
+                OnPropertyChanged();
+            }
         }
 
         private bool _hzlimitTracking;
@@ -9374,6 +10900,7 @@ namespace GS.Server.SkyTelescope
                     if (!LimitPark && !LimitTracking) { LimitNothing = true; }
                     if (LimitPark || LimitTracking) { LimitNothing = false; }
                     //Horizon
+                    HzLimitSlewing = SkySettings.HzLimitSlewing;
                     HzLimitTracking = SkySettings.HzLimitTracking;
                     HzLimitPark = SkySettings.HzLimitPark;
                     SetParkHzLimitSelection(SkySettings.ParkHzLimitName);
@@ -10738,6 +12265,18 @@ namespace GS.Server.SkyTelescope
             }
         }
 
+        private bool _decOffsetIsVisible;
+        public bool DecOffsetIsVisible
+        {
+            get => _decOffsetIsVisible;
+            set
+            {
+                if (_decOffsetIsVisible == value) return;
+                _decOffsetIsVisible = value;
+                OnPropertyChanged();
+            }
+        }
+
         private int _autoHomeProgressBar;
         public int AutoHomeProgressBar
         {
@@ -10755,26 +12294,9 @@ namespace GS.Server.SkyTelescope
             }
         }
 
-        public double AutoHomeAxisX
+        public bool AutoHomePositionSelectIsVisible
         {
-            get => SkySettings.AutoHomeAxisX;
-            set
-            {
-                if (Math.Abs(value - SkySettings.AutoHomeAxisX) < 0.00001) { return; }
-                SkySettings.AutoHomeAxisX = value;
-                OnPropertyChanged();
-            }
-        }
-
-        public double AutoHomeAxisY
-        {
-            get => SkySettings.AutoHomeAxisY;
-            set
-            {
-                if (Math.Abs(value - SkySettings.AutoHomeAxisY) < 0.00001) { return; }
-                SkySettings.AutoHomeAxisY = value;
-                OnPropertyChanged();
-            }
+            get => SkySettings.AlignmentMode == AlignmentModes.algPolar;
         }
 
         public IList<int> DecOffsets { get; }
@@ -10833,6 +12355,7 @@ namespace GS.Server.SkyTelescope
                     }
                     DialogContent = new AutoHomeDialog();
                     StartEnabled = true;
+                    DecOffsetIsVisible = SkySettings.AlignmentMode == AlignmentModes.algGermanPolar;
                     SkyServer.AutoHomeProgressBar = 0;
                     AutoHomeLimit = 100;
                     IsDialogOpen = true;
@@ -11200,9 +12723,11 @@ namespace GS.Server.SkyTelescope
                     var polarMode = SkySettings.PolarMode;
                     var win = Application.Current.Windows.OfType<HardwareLimitsV>().FirstOrDefault();
                     if (win != null) return;
-                    var window = new HardwareLimitsV();
-                    // Set by code before window is shown but after constructor is called
-                    window.Owner = App.Current.MainWindow;
+                    var window = new HardwareLimitsV
+                    {
+                        // Set by code before window is shown but after constructor is called
+                        Owner = App.Current.MainWindow
+                    };
                     window.ShowDialog();
                     // If Polar Mode has changed and update settings and views
                     if (SkySettings.PolarMode != polarMode)
@@ -11246,6 +12771,7 @@ namespace GS.Server.SkyTelescope
                         //Horizon
                         HzLimitTracking = SkySettings.HzLimitTracking;
                         HzLimitPark = SkySettings.HzLimitPark;
+                        HzLimitSlewing = SkySettings.HzLimitSlewing;
                         SetParkHzLimitSelection(SkySettings.ParkHzLimitName);
                         if (!HzLimitPark && !HzLimitTracking) { HzLimitNothing = true; }
                         if (HzLimitPark || HzLimitTracking) { HzLimitNothing = false; }
@@ -11268,6 +12794,386 @@ namespace GS.Server.SkyTelescope
                     Message = $"{ex.Message}|{ex.StackTrace}"
                 };
                 MonitorLog.LogToMonitor(monitorItem);
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        #endregion
+
+        #region Home Settings Dialog
+        public bool HomeSettingsDialogIsVisible
+        {
+            get => SkySettings.AlignmentMode == AlignmentModes.algPolar;
+        }
+
+        public bool CustomAutoHomeSettingsIsVisible
+        {
+            get => SelectedAutoHomePosition != AutoHomePositionType.DefaultGEM;
+        }
+
+        private AutoHomePositionType _selectedAutoHomePosition;
+        public AutoHomePositionType SelectedAutoHomePosition
+        {
+            get => _selectedAutoHomePosition;
+            set
+            {
+                if (_selectedAutoHomePosition != value)
+                {
+                    _selectedAutoHomePosition = value;
+                    OnPropertyChanged(nameof(SelectedAutoHomePosition));
+                    OnPropertyChanged(nameof(CustomAutoHomeSettingsIsVisible));
+                }
+            }
+        }
+
+        public double AutoHomeAxisX
+        {
+            get => SkySettings.AutoHomeAxisX;
+            set
+            {
+                SkySettings.AutoHomeAxisX = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double AutoHomeAxisY
+        {
+            get => SkySettings.AutoHomeAxisY;
+            set
+            {
+                SkySettings.AutoHomeAxisY = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public IList<double> AutoHomeAxisValues { get; }
+
+        private int _autoHomeAxisAz;
+        public int AutoHomeAxisAz
+        {
+            get => _autoHomeAxisAz;
+            set
+            {
+                if (value == _autoHomeAxisAz) { return; }
+                _autoHomeAxisAz = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private int _autoHomeAxisAlt;
+        public int AutoHomeAxisAlt
+        {
+            get => _autoHomeAxisAlt;
+            set
+            {
+                if (value == _autoHomeAxisAlt) { return; }
+                _autoHomeAxisAlt = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private HomeParkPositionType _selectedHomeParkPosition;
+        /// <summary>
+        /// Selected option for the Home Park Position panel — Default or Custom Az/Alt
+        /// </summary>
+        public HomeParkPositionType SelectedHomeParkPosition
+        {
+            get => _selectedHomeParkPosition;
+            set
+            {
+                if (_selectedHomeParkPosition == value) return;
+                _selectedHomeParkPosition = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(CustomHomeParkSettingsIsVisible));
+            }
+        }
+
+        /// <summary>
+        /// Controls visibility of the custom Az/Alt input controls in the Home Park Position panel
+        /// </summary>
+        public bool CustomHomeParkSettingsIsVisible =>
+            SelectedHomeParkPosition == HomeParkPositionType.Custom;
+
+        private int _homeParkAz;
+        /// <summary>
+        /// User-entered azimuth (0-360 degrees) for the custom Home park position
+        /// </summary>
+        public int HomeParkAz
+        {
+            get => _homeParkAz;
+            set
+            {
+                if (_homeParkAz == value) return;
+                _homeParkAz = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private int _homeParkAlt;
+        /// <summary>
+        /// User-entered altitude (-90 to 90 degrees) for the custom Home park position
+        /// </summary>
+        public int HomeParkAlt
+        {
+            get => _homeParkAlt;
+            set
+            {
+                if (_homeParkAlt == value) return;
+                _homeParkAlt = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private int _homeAxisX;
+        public int HomeAxisX
+        {
+            get => _homeAxisX;
+            set
+            {
+                if (_homeAxisX == value) return;
+                _homeAxisX = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private int _homeAxisY;
+        public int HomeAxisY
+        {
+            get => _homeAxisY;
+            set
+            {
+                if (_homeAxisY == value) return;
+                _homeAxisY = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public IList<int> HomeAxisAltList { get; }
+
+        /// <summary>
+        /// Azimuth selection list (0 to 360 degrees, integer steps)
+        /// </summary>
+        public IList<int> HomeParkAzList { get; }
+
+        /// <summary>
+        /// Altitude selection list (-90 to 90 degrees, integer steps)
+        /// </summary>
+        public IList<int> HomeParkAltList { get; }
+
+        // Commands
+        private ICommand _openHomeSettingsDialogCmd;
+        public ICommand OpenHomeSettingsDialogCmd
+        {
+            get
+            {
+                var command = _openHomeSettingsDialogCmd;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _openHomeSettingsDialogCmd = new RelayCommand(
+                    param => OpenHomeSettingsDialog()
+                );
+            }
+        }
+        private void OpenHomeSettingsDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    DialogContent = new HomeSettingsDialog();
+                    IsDialogOpen = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _acceptHomeSettingsDialogCmd;
+        public ICommand AcceptHomeSettingsDialogCmd
+        {
+            get
+            {
+                var command = _acceptHomeSettingsDialogCmd;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _acceptHomeSettingsDialogCmd = new RelayCommand(
+                    param => AcceptHomeSettingsDialog()
+                );
+            }
+        }
+        private void AcceptHomeSettingsDialog()
+        {
+            try
+            {
+                switch (SelectedAutoHomePosition)
+                {
+                    case AutoHomePositionType.DefaultGEM:
+                        AutoHomeAxisX = 90.0;
+                        AutoHomeAxisY = 90.0;
+                        break;
+                    case AutoHomePositionType.PolarAzAlt:
+                        var autoHome = Coordinate.AltAz2HaDec(AutoHomeAxisAlt, AutoHomeAxisAz, SkySettings.Latitude);
+                        // Check Southern Hemisphere
+                        var isSouthern = SkyServer.SouthernHemisphere;
+
+                        // Save Auto Home Position
+                        AutoHomeAxisX = Math.Round((isSouthern ? 180.0 - autoHome[0] * 15.0 : autoHome[0] * 15.0), 5); // Convert from Hour Angle
+                        AutoHomeAxisY = Math.Round(isSouthern ? -autoHome[1] : autoHome[1], 5);
+
+                        // Save Home Position
+                        SkySettings.HomeAxisX = HomeAxisX + (isSouthern ? 180 : 0);   // reverse the display offset when southern
+                        SkySettings.HomeAxisY = HomeAxisY;
+                        break;
+                    case AutoHomePositionType.PolarRADec:
+                        break;
+                    default:
+                        break;
+                }
+
+                // Determine final Az/Alt for the Home park position
+                double homeParkAzDeg;
+                double homeParkAltDeg;
+
+                if (SelectedHomeParkPosition == HomeParkPositionType.Default)
+                {
+                    homeParkAzDeg  = SkyServer.SouthernHemisphere ? 180.0 : 360.0;
+                    homeParkAltDeg = Math.Abs(SkySettings.Latitude);
+                }
+                else
+                {
+                    homeParkAzDeg  = HomeParkAz;
+                    homeParkAltDeg = HomeParkAlt;
+                }
+
+                var homeParkAxes = Axes.AzAltToPolarPark(homeParkAzDeg, homeParkAltDeg);
+                if (SelectedHomeParkPosition == HomeParkPositionType.Default)
+                {
+                    homeParkAxes[0] = 90.0;
+                    homeParkAxes[1] = 90.0;
+                }
+
+                // Validate custom park position is reachable with a normal slew
+                if (SelectedHomeParkPosition == HomeParkPositionType.Custom)
+                {
+                    var physicalTarget = SkyServer.MapSlewTargetToAxes(
+                        new[] { homeParkAxes[0], homeParkAxes[1] }, SlewType.SlewPark);
+
+                    if (!SkyServer.IsTargetWithinLimits(physicalTarget))
+                    {
+                        _returnDialogContent = new HomeSettingsDialog();
+                        DialogMsg = $"{Application.Current.Resources["homeSettingsParkOutsideLimits"]}";
+                        DialogCaption = $"{Application.Current.Resources["exError"]}";
+                        DialogContent = new DialogOK();
+                        IsDialogOpen = true;
+                        return;
+                    }
+
+                    if (Axes.DetermineIfThroughPole(physicalTarget[0], physicalTarget[1]))
+                    {
+                        _returnDialogContent = new HomeSettingsDialog();
+                        DialogMsg = $"{Application.Current.Resources["homeSettingsParkThroughPole"]}";
+                        DialogCaption = $"{Application.Current.Resources["exError"]}";
+                        DialogContent = new DialogOK();
+                        IsDialogOpen = true;
+                        return;
+                    }
+                }
+
+                var existingHomePark = ParkPositionViewModel.Instance.Positions
+                    .FirstOrDefault(p => string.Equals(p.Name, "Home", StringComparison.OrdinalIgnoreCase));
+
+                if (existingHomePark != null)
+                {
+                    ParkPositionViewModel.Instance.UpdatePosition(existingHomePark, homeParkAxes[0], homeParkAxes[1]);
+                }
+                else
+                {
+                    ParkPositionViewModel.Instance.AddPosition("Home", homeParkAxes[0], homeParkAxes[1]);
+                }
+
+                using (new WaitCursor())
+                {
+                    IsDialogOpen = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _cancelHomeSettingsDialogCmd;
+        public ICommand CancelHomeSettingsDialogCmd
+        {
+            get
+            {
+                var command = _cancelAltDecimalDialogCmd;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _cancelHomeSettingsDialogCmd = new RelayCommand(
+                    param => CancelHomeSettingsDialog()
+                );
+            }
+        }
+        private void CancelHomeSettingsDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    IsDialogOpen = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
         }

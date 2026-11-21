@@ -1,5 +1,21 @@
-﻿using System;
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published
+    by the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+using System;
 using System.Collections.Generic;
+using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Linq;
 using System.Reflection;
@@ -18,15 +34,15 @@ using NativeMethods = GS.Server.Helpers.NativeMethods;
 
 namespace GS.Server.Windows
 {
-    public class ButtonsControlVM : ObservableObject, IDisposable
+    public class ButtonsControlVm : ObservableObject, IDisposable
     {
         #region Fields
 
-        private readonly SkyTelescopeVm _skyTelescopeVM;
+        private readonly SkyTelescopeVm _skyTelescopeVm;
 
         #endregion
 
-        public ButtonsControlVM()
+        public ButtonsControlVm()
         {
             try
             {
@@ -36,28 +52,37 @@ namespace GS.Server.Windows
                         { Datetime = HiResDateTime.UtcNow, Device = MonitorDevice.Ui, Category = MonitorCategory.Interface, Type = MonitorType.Information, Method = MethodBase.GetCurrentMethod()?.Name, Thread = Thread.CurrentThread.ManagedThreadId, Message = "Opening Hand Control Window" };
                     MonitorLog.LogToMonitor(monitorItem);
 
-                    _skyTelescopeVM = SkyTelescopeVm.ASkyTelescopeVm;
+                    _skyTelescopeVm = SkyTelescopeVm.ASkyTelescopeVm;
                     SkyServer.StaticPropertyChanged += PropertyChangedSkyServer;
                     SkySettings.StaticPropertyChanged += PropertyChangedSkySettings;
+                    ParkPositionViewModel.Instance.PropertyChanged += PropertyChangedParkPositionViewModel;
 
                     Title = "GS";
                     ScreenEnabled = SkyServer.IsMountRunning;
                     ButtonsWinVisibility = false;
                     TopMost = true;
 
-                    ParkSelection = ParkPositions.FirstOrDefault();
-                    ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                    if (ParkPositions.Count > 0)
+                    {
+                        ParkSelection = ParkPositions.FirstOrDefault();
+                        ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                    }
                     AtPark = SkyServer.AtPark;
                     IsHome = SkyServer.IsHome;
+                    IsLimits = SkySettings.LimitsOn;
                     IsTracking = SkyServer.Tracking || SkyServer.SlewState == SlewType.SlewRaDec;
                     IsMoveAxisActive = SkyServer.Tracking && SkyServer.MoveAxisActive;
                     TrackingRate = SkySettings.TrackingRate;
-                    _skyTelescopeVM.TrackingRate = SkySettings.TrackingRate;
+                    _skyTelescopeVm.TrackingRate = SkySettings.TrackingRate;
+                    AxisTrackingLimits = new List<double>(Numbers.InclusiveRange(0, 15, 1));
+                    AxisHzTrackingLimits = new List<double>(Numbers.InclusiveRange(-20, 20, 1));
 
                     AutoHomeLimits = new List<int>(Enumerable.Range(20, 160));
                     DecOffsets = new List<int>() { 0, -90, 90 };
+                    AutoHomeAxisValues = new List<double>(Numbers.InclusiveRange(85.0, 95.0));
                     AutoHomeEnabled = SkyServer.CanHomeSensor;
                     AutoHomeProgressBar = SkyServer.AutoHomeProgressBar;
+                    IsGermanPolarMode = (SkySettings.AlignmentMode == AlignmentModes.algGermanPolar);
                     // Pec button
                     PecShow = SkyServer.PecShow;
                     PecOn = SkyServer.PecOn;
@@ -97,7 +122,6 @@ namespace GS.Server.Windows
                     resource += "Polar";
                     break;
                 case AlignmentModes.algGermanPolar:
-                    break;
                 default:
                     break;
             }
@@ -152,11 +176,17 @@ namespace GS.Server.Windows
                      case "AutoHomeProgressBar":
                          AutoHomeProgressBar = SkyServer.AutoHomeProgressBar;
                          break;
+                     case "IsAutoHomeRunning":
+                         IsAutoHomeDialogOpen = SkyServer.IsAutoHomeRunning;
+                         break;
                      case "CanHomeSensor":
                          AutoHomeEnabled = SkyServer.CanHomeSensor;
                          break;
                      case "IsHome":
                          IsHome = SkyServer.IsHome;
+                         break;
+                     case "IsInFlipZone":
+                         IsInFlipZone = SkyServer.IsInFlipZone;
                          break;
                      case "IsMountRunning":
                          ScreenEnabled = SkyServer.IsMountRunning;
@@ -204,6 +234,9 @@ namespace GS.Server.Windows
              {
                  switch (e.PropertyName)
                  {
+                     case "LimitsOn":
+                         IsLimits= SkySettings.LimitsOn;
+                         break;
                      case "TrackingRate":
                          TrackingRate = SkySettings.TrackingRate;
                          break;
@@ -211,10 +244,13 @@ namespace GS.Server.Windows
                          //HcSpeed = (double)SkySettings.HcSpeed;
                          break;
                      case "AlignmentMode":
-                         ParkPositions = SkySettings.ParkPositions;
-                         ParkSelection = ParkPositions.FirstOrDefault();
-                         ParkSelectionSetting = ParkSelection;
-                         switch (SkySettings.AlignmentMode)
+                        OnPropertyChanged(nameof(ParkPositions));
+                        if (ParkPositions.Count > 0)
+                        {
+                            ParkSelection = ParkPositions.FirstOrDefault();
+                            ParkSelectionSetting = ParkPositions.FirstOrDefault();
+                        }
+                        switch (SkySettings.AlignmentMode)
                          {
                              case AlignmentModes.algAltAz:
                                  SkySettings.CanSetPierSide = false;
@@ -226,7 +262,44 @@ namespace GS.Server.Windows
                                  break;
                          }
                          // ReSharper disable ExplicitCallerInfoArgument
-                         OnPropertyChanged($"ParkPositions");
+                         OnPropertyChanged("ParkPositions");
+                         break;
+                 }
+             });
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private void PropertyChangedParkPositionViewModel(object sender, PropertyChangedEventArgs e)
+        {
+            try
+            {
+                ThreadContext.BeginInvokeOnUiThread(
+             delegate
+             {
+                 switch (e.PropertyName)
+                 {
+                     case "SettingsSelection":
+                         OnPropertyChanged(nameof(ParkSelectionSetting));
+                         break;
+                     case "Selection":
+                         OnPropertyChanged(nameof(ParkSelection));
                          break;
                  }
              });
@@ -383,7 +456,7 @@ namespace GS.Server.Windows
 
         #region Button Control
 
-        public bool _atPark;
+        private bool _atPark;
         public bool AtPark
         {
             get => _atPark;
@@ -408,7 +481,7 @@ namespace GS.Server.Windows
             }
         }
 
-        public bool _isHome;
+        private bool _isHome;
         public bool IsHome
         {
             get => _isHome;
@@ -434,6 +507,255 @@ namespace GS.Server.Windows
             }
         }
 
+        private bool _isLimits;
+        public bool IsLimits
+        {
+            get => _isLimits;
+            set
+            {
+                _isLimits = value;
+                SkySettings.LimitsOn = value;
+                LimitsBadgeContent = value ? Application.Current.Resources["btnHintTracking"].ToString() : "";
+                OnPropertyChanged();
+            }
+        }
+
+        // Meridian Limits Options
+        private void SetParkLimitSelection(string name)
+        {
+            var found = ParkPositions.FirstOrDefault(x => x.Name == name);
+            ParkLimitSelection = found ?? ParkPositions.FirstOrDefault();
+        }
+
+        public IList<double> AxisTrackingLimits { get; }
+        public double AxisTrackingLimit
+        {
+            get => SkySettings.AxisTrackingLimit;
+            set
+            {
+                SkySettings.AxisTrackingLimit = value;
+                OnPropertyChanged();
+            }
+        }
+        public IList<double> AxisHzTrackingLimits { get; }
+        public double AxisHzTrackingLimit
+        {
+            get => SkySettings.AxisHzTrackingLimit;
+            set
+            {
+                SkySettings.AxisHzTrackingLimit = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _limitTracking;
+        public bool LimitTracking
+        {
+            get => _limitTracking;
+            set
+            {
+                _limitTracking = value;
+                SkySettings.LimitTracking = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _limitPark;
+        public bool LimitPark
+        {
+            get => _limitPark;
+            set
+            {
+                _limitPark = value;
+                SkySettings.LimitPark = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private ParkPosition _parkLimitSelection;
+        public ParkPosition ParkLimitSelection
+        {
+            get => _parkLimitSelection;
+            set
+            {
+                if (value is null || _parkLimitSelection == value) return;
+                _parkLimitSelection = value;
+                SkySettings.ParkLimitName = value.Name;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _limitNothing;
+        public bool LimitNothing
+        {
+            get => _limitNothing;
+            set
+            {
+                _limitNothing = value;
+                OnPropertyChanged();
+            }
+        }
+
+        // Horizon Limits Options
+        private void SetParkHzLimitSelection(string name)
+        {
+            var found = ParkPositions.FirstOrDefault(x => x.Name == name);
+            ParkHzLimitSelection = found ?? ParkPositions.FirstOrDefault();
+        }
+
+        private bool _hzlimitTracking;
+        public bool HzLimitTracking
+        {
+            get => _hzlimitTracking;
+            set
+            {
+                _hzlimitTracking = value;
+                SkySettings.HzLimitTracking = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _hzlimitPark;
+        public bool HzLimitPark
+        {
+            get => _hzlimitPark;
+            set
+            {
+                _hzlimitPark = value;
+                SkySettings.HzLimitPark = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private ParkPosition _parkHzLimitSelection;
+        public ParkPosition ParkHzLimitSelection
+        {
+            get => _parkHzLimitSelection;
+            set
+            {
+                if (value is null || _parkHzLimitSelection == value) return;
+                _parkHzLimitSelection = value;
+                SkySettings.ParkHzLimitName = value.Name;
+                OnPropertyChanged();
+            }
+        }
+
+        private bool _hzlimitNothing;
+        public bool HzLimitNothing
+        {
+            get => _hzlimitNothing;
+            set
+            {
+                _hzlimitNothing = value;
+                OnPropertyChanged();
+            }
+        }
+
+        // Commands
+        private ICommand _openLimitDialogCommand;
+        public ICommand OpenLimitDialogCommand
+        {
+            get
+            {
+                var command = _openLimitDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _openLimitDialogCommand = new RelayCommand(
+                    param => OpenLimitDialog()
+                );
+            }
+        }
+        private void OpenLimitDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    //Meridian
+                    LimitTracking = SkySettings.LimitTracking;
+                    LimitPark = SkySettings.LimitPark;
+                    SetParkLimitSelection(SkySettings.ParkLimitName);
+                    if (!LimitPark && !LimitTracking) { LimitNothing = true; }
+                    if (LimitPark || LimitTracking) { LimitNothing = false; }
+                    //Horizon
+                    HzLimitTracking = SkySettings.HzLimitTracking;
+                    HzLimitPark = SkySettings.HzLimitPark;
+                    SetParkHzLimitSelection(SkySettings.ParkHzLimitName);
+                    if (!HzLimitPark && !HzLimitTracking) { HzLimitNothing = true; }
+                    if (HzLimitPark || HzLimitTracking) { HzLimitNothing = false; }
+
+                    DialogContent = new LimitDialog();
+                    IsDialogOpen = true;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        private ICommand _okLimitDialogCommand;
+        public ICommand OkLimitDialogCommand
+        {
+            get
+            {
+                var command = _okLimitDialogCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _okLimitDialogCommand = new RelayCommand(
+                    param => OkLimitDialog()
+                );
+            }
+        }
+        private void OkLimitDialog()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    IsDialogOpen = false;
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
+        #endregion
+
+
         private bool _isMoveAxisActive;
         public bool IsMoveAxisActive
         {
@@ -455,7 +777,7 @@ namespace GS.Server.Windows
                 if (_trackingRate == value) return;
                 _trackingRate = value;
                 SkySettings.TrackingRate = value;
-                _skyTelescopeVM.TrackingRate = SkySettings.TrackingRate;
+                _skyTelescopeVm.TrackingRate = SkySettings.TrackingRate;
                 if (SkyServer.Tracking)
                 {
                     SkyServer.TrackingSpeak = false;
@@ -513,59 +835,24 @@ namespace GS.Server.Windows
             set
             {
                 _pecOn = value;
-                if (SkyServer.PecOn) { _skyTelescopeVM.PecState = true; }
-                if (!SkyServer.PPecOn && !SkyServer.PecOn) { _skyTelescopeVM.PecState = false; }
+                if (SkyServer.PecOn) { _skyTelescopeVm.PecState = true; }
+                if (!SkyServer.PPecOn && !SkyServer.PecOn) { _skyTelescopeVm.PecState = false; }
                 PecBadgeContent = SkyServer.PecOn ? Application.Current.Resources["PecBadge"].ToString() : "";
             }
         }
 
-        private List<ParkPosition> _parkPositions;
-        public List<ParkPosition> ParkPositions
-        {
-            get => SkySettings.ParkPositions;
-            set
-            {
-                if (_parkPositions == value) return;
-                _parkPositions = value;
-                SkySettings.ParkPositions = value;
-                OnPropertyChanged();
-            }
-        }
+        public ObservableCollection<ParkPosition> ParkPositions => ParkPositionViewModel.Instance.Positions;
 
-        private ParkPosition _parkSelection;
         public ParkPosition ParkSelection
         {
-            get => _parkSelection;
-            set
-            {
-                if (_parkSelection == value) return;
-
-                var found = ParkPositions.Find(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
-                if (found == null) // did not find match in list
-                {
-                    ParkPositions.Add(value);
-                    _parkSelection = value;
-                    SkyServer.ParkSelected = value;
-                }
-                else
-                {
-                    _parkSelection = found;
-                    SkyServer.ParkSelected = found;
-                }
-                OnPropertyChanged();
-            }
+            get => ParkPositionViewModel.Instance.Selection;
+            set => ParkPositionViewModel.Instance.Selection = value;
         }
 
-        private ParkPosition _parkSelectionSetting;
         public ParkPosition ParkSelectionSetting
         {
-            get => _parkSelectionSetting;
-            set
-            {
-                if (_parkSelectionSetting == value) return;
-                _parkSelectionSetting = value;
-                OnPropertyChanged();
-            }
+            get => ParkPositionViewModel.Instance.SettingsSelection;
+            set => ParkPositionViewModel.Instance.SettingsSelection = value;
         }
 
         private string _parkNewName;
@@ -816,13 +1103,30 @@ namespace GS.Server.Windows
                 using (new WaitCursor())
                 {
                     if (string.IsNullOrEmpty(ParkNewName)) return;
-                    var pp = new ParkPosition { Name = ParkNewName.Trim() };
-                    ParkPositions.Add(pp);
-                    SkySettings.ParkPositions = ParkPositions;
-                    ParkSelectionSetting = pp;
-                    ParkSelection = ParkPositions.FirstOrDefault();
+
+                    var axes = Axes.MountAxis2Mount();
+                    if (axes == null) return;
+
+                    ParkPositionViewModel.Instance.AddPosition(ParkNewName.Trim(), axes[0], axes[1]);
                     IsParkAddDialogOpen = false;
                 }
+            }
+            catch (InvalidOperationException ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Warning,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = ex.Message
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
             catch (Exception ex)
             {
@@ -972,11 +1276,7 @@ namespace GS.Server.Windows
                 using (new WaitCursor())
                 {
                     if (ParkSelectionSetting == null) return;
-                    //if (ParkPositions.Count == 1) return;
-                    ParkPositions.Remove(ParkSelectionSetting);
-                    SkySettings.ParkPositions = ParkPositions;
-                    ParkSelectionSetting = ParkPositions.FirstOrDefault();
-                    ParkSelection = ParkPositions.FirstOrDefault();
+                    ParkPositionViewModel.Instance.DeletePosition(ParkSelectionSetting);
                     IsParkDeleteDialogOpen = false;
                 }
             }
@@ -1064,7 +1364,14 @@ namespace GS.Server.Windows
                     if (parked)
                     {
                         SkyServer.AtPark = false;
-                        SkyServer.Tracking = true;
+                        if (SkySettings.TrackAfterUnpark)
+                        {
+                            SkyServer.Tracking = (SkySettings.AlignmentMode != AlignmentModes.algAltAz);
+                        }
+                        else
+                        {
+                            SkyServer.Tracking = false;
+                        }
                     }
                     else
                     {
@@ -1153,6 +1460,18 @@ namespace GS.Server.Windows
             }
         }
 
+        private string _limitsBadgeContent;
+        public string LimitsBadgeContent
+        {
+            get => _limitsBadgeContent;
+            set
+            {
+                if (LimitsBadgeContent == value) return;
+                _limitsBadgeContent = value;
+                OnPropertyChanged();
+            }
+        }
+
         private ICommand _clickHomeCmd;
         public ICommand ClickHomeCommand
         {
@@ -1177,7 +1496,7 @@ namespace GS.Server.Windows
                 {
                     if (SkyServer.AtPark)
                     {
-                        _skyTelescopeVM.BlinkParked();
+                        _skyTelescopeVm.BlinkParked();
                         Synthesizer.Speak(Application.Current.Resources["vceParked"].ToString());
                         return;
                     }
@@ -1342,7 +1661,7 @@ namespace GS.Server.Windows
             {
                 if (_isSchedulerDialogOpen == value) return;
                 _isSchedulerDialogOpen = value;
-                _skyTelescopeVM.CloseDialogs(value);
+                _skyTelescopeVm.CloseDialogs(value);
                 CloseDialogs(value);
                 OnPropertyChanged();
             }
@@ -1380,18 +1699,18 @@ namespace GS.Server.Windows
         {
             try
             {
-                if (_skyTelescopeVM.FutureParkDate == null)
+                if (_skyTelescopeVm.FutureParkDate == null)
                 {
-                    _skyTelescopeVM.FutureParkDate = DateTime.Now + TimeSpan.FromSeconds(60);
+                    _skyTelescopeVm.FutureParkDate = DateTime.Now + TimeSpan.FromSeconds(60);
                 }
-                if (_skyTelescopeVM.FutureParkTime == null)
+                if (_skyTelescopeVm.FutureParkTime == null)
                 {
-                    _skyTelescopeVM.FutureParkTime = $"{DateTime.Now + TimeSpan.FromSeconds(60):HH:mm}";
+                    _skyTelescopeVm.FutureParkTime = $"{DateTime.Now + TimeSpan.FromSeconds(60):HH:mm}";
                 }
 
-                FutureParkDate = _skyTelescopeVM.FutureParkDate;
-                FutureParkTime = _skyTelescopeVM.FutureParkTime;
-                ScheduleParkOn = _skyTelescopeVM.ScheduleParkOn;
+                FutureParkDate = _skyTelescopeVm.FutureParkDate;
+                FutureParkTime = _skyTelescopeVm.FutureParkTime;
+                ScheduleParkOn = _skyTelescopeVm.ScheduleParkOn;
 
                 SchedulerContent = new SchedulerDialog();
                 IsSchedulerDialogOpen = true;
@@ -1496,13 +1815,13 @@ namespace GS.Server.Windows
             {
                 if (value)
                 {
-                    _skyTelescopeVM.FutureParkDate = FutureParkDate;
-                    _skyTelescopeVM.FutureParkTime = FutureParkTime;
-                    _skyTelescopeVM.ScheduleParkOn = true;
+                    _skyTelescopeVm.FutureParkDate = FutureParkDate;
+                    _skyTelescopeVm.FutureParkTime = FutureParkTime;
+                    _skyTelescopeVm.ScheduleParkOn = true;
                 }
                 else
                 {
-                    _skyTelescopeVM.ScheduleParkOn = false;
+                    _skyTelescopeVm.ScheduleParkOn = false;
                 }
                 _scheduleParkOn = value;
                 OnPropertyChanged();
@@ -1535,6 +1854,52 @@ namespace GS.Server.Windows
             }
         }
         #endregion
+
+        private ICommand _clickLimitsCmd;
+        public ICommand ClickLimitsCommand
+        {
+            get
+            {
+                var command = _clickLimitsCmd;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _clickLimitsCmd = new RelayCommand(
+                    param => ClickLimits()
+                );
+            }
+        }
+        private void ClickLimits()
+        {
+            try
+            {
+                using (new WaitCursor())
+                {
+                    SkySettings.LimitsOn = !SkySettings.LimitsOn;
+                    Synthesizer.Speak(SkySettings.LimitsOn ? Application.Current.Resources["vceLimitsOn"].ToString() : Application.Current.Resources["vceLimitsOff"].ToString());
+                }
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                SkyServer.AlertState = true;
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
 
         private ICommand _clickPecOnCmd;
         public ICommand ClickPecOnCmd
@@ -1607,7 +1972,7 @@ namespace GS.Server.Windows
                 OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
             }
         }
-        #endregion
+        
 
         #region ReSync Dialog
 
@@ -1631,7 +1996,7 @@ namespace GS.Server.Windows
             {
                 if (_reSyncParkSelection == value) { return; }
 
-                var found = ParkPositions.Find(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
+                var found = ParkPositions.FirstOrDefault(x => x.Name == value.Name && Math.Abs(x.X - value.X) <= 0.00001 && Math.Abs(x.Y - value.Y) <= 0.00001);
                 if (found == null) // did not find match in list
                 {
                     ParkPositions.Add(value);
@@ -1809,7 +2174,7 @@ namespace GS.Server.Windows
             {
                 if (_isHomeResetDialogOpen == value) return;
                 _isHomeResetDialogOpen = value;
-                _skyTelescopeVM.CloseDialogs(value);
+                _skyTelescopeVm.CloseDialogs(value);
                 CloseDialogs(value);
                 OnPropertyChanged();
             }
@@ -2298,6 +2663,18 @@ namespace GS.Server.Windows
             }
         }
 
+        private bool _decOffsetIsVisible;
+        public bool DecOffsetIsVisible
+        {
+            get => _decOffsetIsVisible;
+            set
+            {
+                if (_decOffsetIsVisible == value) return;
+                _decOffsetIsVisible = value;
+                OnPropertyChanged();
+            }
+        }
+
         private int _autoHomeProgressBar;
         public int AutoHomeProgressBar
         {
@@ -2311,28 +2688,6 @@ namespace GS.Server.Windows
                     IsAutoHomeDialogOpen = false;
                     SkyServer.AutoHomeProgressBar = 0;
                 }
-                OnPropertyChanged();
-            }
-        }
-
-        public double AutoHomeAxisX
-        {
-            get => SkySettings.AutoHomeAxisX;
-            set
-            {
-                if (Math.Abs(value - SkySettings.AutoHomeAxisX) < 0.00001) { return; }
-                SkySettings.AutoHomeAxisX = value;
-                OnPropertyChanged();
-            }
-        }
-
-        public double AutoHomeAxisY
-        {
-            get => SkySettings.AutoHomeAxisY;
-            set
-            {
-                if (Math.Abs(value - SkySettings.AutoHomeAxisY) < 0.00001) { return; }
-                SkySettings.AutoHomeAxisY = value;
                 OnPropertyChanged();
             }
         }
@@ -2364,6 +2719,93 @@ namespace GS.Server.Windows
             }
         }
 
+        private bool _isGermanPolarMode;
+        public bool IsGermanPolarMode
+        {
+            get => _isGermanPolarMode;
+            set
+            {
+                if (_isGermanPolarMode == value) return;
+                _isGermanPolarMode = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public IList<double> AutoHomeAxisValues { get; }
+
+        public double AutoHomeAxisX
+        {
+            get => _skyTelescopeVm.AutoHomeAxisX;
+            set
+            {
+                _skyTelescopeVm.AutoHomeAxisX = value;
+                OnPropertyChanged();
+            }
+        }
+
+        public double AutoHomeAxisY
+        {
+            get => _skyTelescopeVm.AutoHomeAxisY;
+            set
+            {
+                _skyTelescopeVm.AutoHomeAxisY = value;
+                OnPropertyChanged();
+            }
+        }
+
+        private ICommand _resetSensorPositionCommand;
+        public ICommand ResetSensorPositionCommand
+        {
+            get
+            {
+                var command = _resetSensorPositionCommand;
+                if (command != null)
+                {
+                    return command;
+                }
+
+                return _resetSensorPositionCommand = new RelayCommand(
+                    param => ResetSensorPosition()
+                );
+            }
+        }
+        private void ResetSensorPosition()
+        {
+            try
+            {
+                AutoHomeAxisX = 90.0;
+                AutoHomeAxisY = 90.0;
+
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Information,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = "AutoHome sensor positions reset to default: Ra=90.0, Dec=90.0"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+            }
+            catch (Exception ex)
+            {
+                var monitorItem = new MonitorEntry
+                {
+                    Datetime = HiResDateTime.UtcNow,
+                    Device = MonitorDevice.Ui,
+                    Category = MonitorCategory.Interface,
+                    Type = MonitorType.Error,
+                    Method = MethodBase.GetCurrentMethod()?.Name,
+                    Thread = Thread.CurrentThread.ManagedThreadId,
+                    Message = $"{ex.Message}|{ex.StackTrace}"
+                };
+                MonitorLog.LogToMonitor(monitorItem);
+
+                OpenDialog(ex.Message, $"{Application.Current.Resources["exError"]}");
+            }
+        }
+
         private bool _isAutoHomeDialogOpen;
         public bool IsAutoHomeDialogOpen
         {
@@ -2373,7 +2815,7 @@ namespace GS.Server.Windows
                 if (_isAutoHomeDialogOpen == value) return;
                 _isAutoHomeDialogOpen = value;
                 CloseDialogs(value);
-                _skyTelescopeVM.CloseDialogs(value);
+                _skyTelescopeVm.CloseDialogs(value);
                 OnPropertyChanged();
             }
         }
@@ -2419,6 +2861,7 @@ namespace GS.Server.Windows
                     }
                     AutoHomeContent = new AutoHomeDialog();
                     StartEnabled = true;
+                    DecOffsetIsVisible = SkySettings.AlignmentMode == AlignmentModes.algGermanPolar;
                     SkyServer.AutoHomeProgressBar = 0;
                     AutoHomeLimit = 100;
                     IsAutoHomeDialogOpen = true;
@@ -2754,6 +3197,20 @@ namespace GS.Server.Windows
             }
         }
 
+        private bool _isInFlipZone;
+        public bool IsInFlipZone
+        {
+            get => _isInFlipZone;
+            set
+            {
+                {
+                    if (IsInFlipZone == value) return;
+                    _isInFlipZone = value;
+                    OnPropertyChanged();
+                }
+            }
+        }
+
         private ICommand _acceptFlipGoToDialogCmd;
         public ICommand AcceptFlipGoToDialogCmd
         {
@@ -2822,7 +3279,7 @@ namespace GS.Server.Windows
         // NOTE: Leave out the finalizer altogether if this class doesn't
         // own unmanaged resources itself, but leave the other methods
         // exactly as they are.
-        ~ButtonsControlVM()
+        ~ButtonsControlVm()
         {
             // Finalizer calls Dispose(false)
             Dispose(false);

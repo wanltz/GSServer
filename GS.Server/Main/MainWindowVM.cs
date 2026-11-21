@@ -1,4 +1,4 @@
-﻿/* Copyright(C) 2019-2025 Rob Morgan (robert.morgan.e@gmail.com)
+﻿/* Copyright(C) 2019-2026 Rob Morgan (robert.morgan.e@gmail.com)
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published
@@ -53,10 +53,10 @@ namespace GS.Server.Main
         private List<IPageVM> _pageViewModels;
         private SkyTelescopeVm _skyTelescopeVm;
         private FocuserVm _focuserVm;
-        private NotesVM _notesVm;
+        private NotesVm _notesVm;
         private SettingsVm _settingsVm;
         private GamePadVM _gamePadVm;
-        private Model3Dvm _model3dVm;
+        private Model3Dvm _model3DVm;
         private PlotVm _plotVm;
         private PoleLocatorVM _poleLocatorVm;
         private PulsesVM _pulsesVm;
@@ -214,7 +214,7 @@ namespace GS.Server.Main
                     {
                         if (!PageViewModels.Contains(_notesVm))
                         {
-                            _notesVm = new NotesVM();
+                            _notesVm = new NotesVm();
                             PageViewModels.Add(_notesVm);
                         }
                         NotesRadioVisible = true;
@@ -274,18 +274,18 @@ namespace GS.Server.Main
                 case "Model3D":
                     if (Settings.Settings.Model3D)
                     {
-                        if (!PageViewModels.Contains(_model3dVm))
+                        if (!PageViewModels.Contains(_model3DVm))
                         {
-                            _model3dVm = new Model3Dvm();
-                            PageViewModels.Add(_model3dVm);
+                            _model3DVm = new Model3Dvm();
+                            PageViewModels.Add(_model3DVm);
                         }
                         Model3DRadioVisible = true;
                     }
                     else
                     {
-                        if (PageViewModels.Contains(_model3dVm))
+                        if (PageViewModels.Contains(_model3DVm))
                         {
-                            PageViewModels.Remove(_model3dVm);
+                            PageViewModels.Remove(_model3DVm);
                         }
                         Model3DRadioVisible = false;
                     }
@@ -590,30 +590,30 @@ namespace GS.Server.Main
             }
         }
 
-        private bool _model3dVmRadio;
+        private bool _model3DVmRadio;
         public bool Model3DvmRadioRadio
         {
-            get => _model3dVmRadio;
+            get => _model3DVmRadio;
             set
             {
                 using (new WaitCursor())
                 {
-                    if (_model3dVmRadio == value) return;
-                    _model3dVmRadio = value;
-                    if (value) ChangeViewModel(_model3dVm);
+                    if (_model3DVmRadio == value) return;
+                    _model3DVmRadio = value;
+                    if (value) ChangeViewModel(_model3DVm);
                     OnPropertyChanged();
                 }
             }
         }
 
-        private bool _model3dRadioVisible;
+        private bool _model3DRadioVisible;
         public bool Model3DRadioVisible
         {
-            get => _model3dRadioVisible;
+            get => _model3DRadioVisible;
             set
             {
-                if (_model3dRadioVisible == value) return;
-                _model3dRadioVisible = value;
+                if (_model3DRadioVisible == value) return;
+                _model3DRadioVisible = value;
                 OnPropertyChanged();
             }
         }
@@ -1157,7 +1157,7 @@ namespace GS.Server.Main
                 _notesVm?.Dispose();
                 _settingsVm?.Dispose();
                 _gamePadVm?.Dispose();
-                _model3dVm?.Dispose();
+                _model3DVm?.Dispose();
                 _pulsesVm?.Dispose();
                 MainWindow1Vm?.Dispose();
                 _pecVm?.Dispose();
